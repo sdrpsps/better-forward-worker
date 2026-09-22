@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { InlineKeyboard } from "grammy";
 import { createDb } from "./db";
 import { autoResponses, blockedUsers, captchaChallenges, settings, spamKeywords, userPermissionOverrides, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
@@ -73,6 +74,25 @@ export async function answerCaptcha(binding: D1Database, userId: string, answer:
 	return true;
 }
 
+function captchaKeyboard(userId: string, answer: number) {
+	const answers = [...new Set([answer, Math.max(0, answer - 1), answer + 1, answer + 2])];
+	return new InlineKeyboard().text(String(answers[0]), `captcha:${userId}:${answers[0]}`).text(String(answers[1]), `captcha:${userId}:${answers[1]}`).row()
+		.text(String(answers[2]), `captcha:${userId}:${answers[2]}`).text(String(answers[3]), `captcha:${userId}:${answers[3]}`);
+}
+
+export async function handleCaptchaCallback(ctx: BotContext & { callbackQuery: { data?: string } }) {
+	const match = /^captcha:(\d+):(\d+)$/.exec(ctx.callbackQuery.data ?? "");
+	if (!match || !ctx.from) return false;
+	if (String(ctx.from.id) !== match[1]) {
+		await ctx.answerCallbackQuery({ text: "This is not your challenge." });
+		return true;
+	}
+	const passed = await answerCaptcha(ctx.env.DB, match[1], Number(match[2]));
+	await ctx.answerCallbackQuery({ text: passed ? t("en", "saved") : "Incorrect." });
+	if (passed) await ctx.editMessageText(t("en", "saved"));
+	return true;
+}
+
 async function sendAutoResponse(ctx: BotContext, response: string) {
 	const [kind, fileId] = response.split(":", 2);
 	if (!fileId) return ctx.reply(response);
@@ -85,7 +105,7 @@ async function sendAutoResponse(ctx: BotContext, response: string) {
 	return ctx.reply(response);
 }
 
-export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: { type: string }; from?: { id: number }; text?: string }; reply: (text: string) => Promise<unknown> }) {
+export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: { type: string }; from?: { id: number }; text?: string }; reply: BotContext["reply"] }) {
 	if (ctx.message.chat.type !== "private" || !ctx.message.from) return false;
 	const userId = String(ctx.message.from.id);
 	if (await isBlocked(ctx.env.DB, userId)) {
@@ -99,20 +119,23 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 			return true;
 		}
 	}
-	const captchaSetting = await createDb(ctx.env.DB).select().from(settings).where(eq(settings.key, "captcha")).get();
-	if (captchaSetting?.value === "enable" && !(await isVerified(ctx.env.DB, userId))) {
-		const existing = await createDb(ctx.env.DB).select().from(captchaChallenges).where(eq(captchaChallenges.userId, userId)).get();
-		if (existing && ctx.message.text && /^\d+$/.test(ctx.message.text)) {
+	const captchaMode = (await createDb(ctx.env.DB).select().from(settings).where(eq(settings.key, "captcha")).get())?.value;
+	if ((captchaMode === "enable" || captchaMode === "math" || captchaMode === "button") && !(await isVerified(ctx.env.DB, userId))) {
+		let challenge = await createDb(ctx.env.DB).select().from(captchaChallenges).where(eq(captchaChallenges.userId, userId)).get();
+		if (captchaMode !== "button" && challenge && ctx.message.text && /^\d+$/.test(ctx.message.text)) {
 			if (await answerCaptcha(ctx.env.DB, userId, Number(ctx.message.text))) await ctx.reply(t("en", "saved"));
-			else await ctx.reply(t("en", "captcha", existing));
+			else await ctx.reply(t("en", "captcha", challenge));
 			return true;
 		}
-		const random = new Uint32Array(2);
-		crypto.getRandomValues(random);
-		const left = 1 + (random[0] % 9);
-		const right = 1 + (random[1] % 9);
-		await createDb(ctx.env.DB).insert(captchaChallenges).values({ userId, leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0 }).onConflictDoUpdate({ target: captchaChallenges.userId, set: { leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0 } });
-		await ctx.reply(t("en", "captcha", { left, right }));
+		if (!challenge || challenge.expiresAt <= Date.now()) {
+			const random = new Uint32Array(2);
+			crypto.getRandomValues(random);
+			const left = 1 + (random[0] % 9);
+			const right = 1 + (random[1] % 9);
+			challenge = { userId, leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0 };
+			await createDb(ctx.env.DB).insert(captchaChallenges).values(challenge).onConflictDoUpdate({ target: captchaChallenges.userId, set: challenge });
+		}
+		await ctx.reply(t("en", "captcha", challenge), captchaMode === "button" ? { reply_markup: captchaKeyboard(userId, challenge.leftOperand + challenge.rightOperand) } : undefined);
 		return true;
 	}
 	if (!ctx.message.text) return false;

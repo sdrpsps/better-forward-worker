@@ -7,7 +7,7 @@ import type { WorkerEnv } from "./app";
 import { editEditedMessage, forwardMessage, handleAdminCommand, handleUserCommand, syncReaction } from "./forwarding";
 import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-flow";
 import { observeInviteLink } from "./chat-id";
-import { handleIncomingPolicy } from "./policy";
+import { handleCaptchaCallback, handleIncomingPolicy } from "./policy";
 
 export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query", "chat_join_request"] as const;
 export const MAX_CONNECTIONS = 40;
@@ -54,6 +54,7 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 	});
 	bot.command("admin", showAdminMenu);
 	bot.callbackQuery(/^admin:/, handleAdminCallback);
+	bot.callbackQuery(/^captcha:/, handleCaptchaCallback);
 	bot.on("chat_join_request", async (ctx) => {
 		const request = ctx.chatJoinRequest;
 		const link = request?.invite_link?.invite_link;

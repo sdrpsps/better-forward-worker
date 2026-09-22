@@ -9,7 +9,7 @@ import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/a
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
-import { answerCaptcha, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
+import { answerCaptcha, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import { enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 
@@ -244,6 +244,16 @@ describe("policy helpers", () => {
 		const replies: string[] = [];
 		expect(await handleUserCommand({ env: testEnv, message: { chat: { id: 42, type: "private" }, text: "/start" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
 		expect(replies).toEqual(["Welcome back"]);
+	});
+
+	it("verifies a button captcha against the persisted challenge", async () => {
+		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, Date.now() + 60_000, 0).run();
+		const callbacks: unknown[] = [];
+		const edits: string[] = [];
+		expect(await handleCaptchaCallback({ env: testEnv, from: { id: 42 }, callbackQuery: { data: "captcha:42:5" }, answerCallbackQuery: async (options: unknown) => { callbacks.push(options); }, editMessageText: async (text: string) => { edits.push(text); } } as never)).toBe(true);
+		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
+		expect(callbacks).toEqual([{ text: "Saved." }]);
+		expect(edits).toEqual(["Saved."]);
 	});
 });
 
