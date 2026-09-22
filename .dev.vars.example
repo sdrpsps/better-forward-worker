@@ -1,3 +1,4 @@
 BOT_INFO_JSON={"id":123456,"is_bot":true,"first_name":"Test Bot","username":"test_bot","can_join_groups":true,"can_read_all_group_messages":false,"supports_inline_queries":false}
 BOT_TOKEN=replace-with-a-test-bot-token
 TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-webhook-secret
+INTERNAL_API_SECRET=replace-with-a-separate-random-internal-secret

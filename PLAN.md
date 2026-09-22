@@ -1,6 +1,6 @@
 # BetterForward → Cloudflare Workers 重构计划
 
-状态：**Phase 0 已完成。**
+状态：**Phase 1 已完成。**
 
 ## 目标与边界
 
@@ -66,9 +66,11 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 1 — 数据层与 Webhook 基础
 
-- [ ] Drizzle 定义 topics、messages、settings、processed updates、临时状态；建立唯一约束、索引、外键策略与时间约定。
-- [ ] 实现 update claim/complete/failure 幂等策略，grammY context flavor（env、db、request id、logger），健康检查，以及受保护 webhook setup/status 命令或运维脚本。
-- [ ] 设置 `allowed_updates` 与初始 `max_connections` 并记录扩容条件。
+- [x] Drizzle 定义 topics、messages、settings、processed updates、临时状态；建立唯一约束、索引、外键策略与时间约定。
+- [x] 实现 update claim/complete/failure 幂等策略，grammY context flavor（env、db、request id、logger），健康检查，以及受保护 webhook setup/status 命令或运维脚本。
+- [x] 设置 `allowed_updates` 与初始 `max_connections` 并记录扩容条件。
+
+**Phase 1 实现与验收（2026-09-22）：** `0002_phase_1.sql` 新增 topics、messages、settings、processed_updates；消息映射和 topic 标识由 D1 唯一约束保护，Telegram ID 在 schema 中使用文本。Webhook middleware 先 claim update，完成或失败后更新状态；完成记录和新鲜 claim 会抑制 Telegram 重复投递，失败和超过 5 分钟的 claim 可重试。`GET/POST /internal/webhook/status|setup` 仅接受 `INTERNAL_API_SECRET` Bearer，setup 使用 `allowed_updates=[message,edited_message,message_reaction,callback_query]` 与 `max_connections=40`。Cloudflare 当前 Workers 限制文档显示单请求同时出站连接仍为 6，初始 40 仅为 Telegram webhook 并发参数；观察 webhook 429/CPU/D1 延迟后再调整，不在本阶段引入 Queue/DO。`pnpm cf-typegen`、`pnpm typecheck`、`pnpm test`、本地 migration apply 均作为验收命令。
 
 验收：重复 update 不重复创建话题/映射；Webhook 初始化不在运行时调用 `getMe`。
 

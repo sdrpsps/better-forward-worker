@@ -8,6 +8,8 @@ const webhookConfigSchema = z.object({
 	TELEGRAM_WEBHOOK_SECRET: z.string().min(1),
 });
 
+const internalApiSecretSchema = z.string().min(1);
+
 const botInfoSchema = z.object({
 	id: z.number().int().positive(),
 	is_bot: z.literal(true),
@@ -31,4 +33,8 @@ export function readWebhookConfig(env: WorkerEnv) {
 	} catch {
 		return null;
 	}
+}
+
+export function readInternalApiSecret(env: WorkerEnv) {
+	return internalApiSecretSchema.safeParse(env.INTERNAL_API_SECRET).data ?? null;
 }

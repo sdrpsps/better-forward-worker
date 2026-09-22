@@ -1,7 +1,9 @@
 import { applyD1Migrations, env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
-import migrationSql from "../migrations/0001_phase_0.sql?raw";
+import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
+import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
+import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import worker from "../src/index";
 
 const testEnv = {
@@ -20,7 +22,8 @@ const testEnv = {
 };
 
 const migrations = [
-	{ name: "0001_phase_0.sql", queries: migrationSql.split(";").filter(Boolean) },
+	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
+	{ name: "0002_phase_1.sql", queries: phase1MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -29,6 +32,10 @@ beforeAll(async () => {
 
 afterEach(async () => {
 	await env.DB.exec("DELETE FROM admin_sessions");
+	await env.DB.exec("DELETE FROM processed_updates");
+	await env.DB.exec("DELETE FROM messages");
+	await env.DB.exec("DELETE FROM topics");
+	await env.DB.exec("DELETE FROM settings");
 });
 
 describe("Telegram webhook", () => {
@@ -63,11 +70,35 @@ describe("Telegram webhook", () => {
 		);
 		await waitOnExecutionContext(context);
 		expect(response.status).toBe(200);
+		expect(await env.DB.prepare("SELECT status, attempts FROM processed_updates WHERE update_id = 1").first()).toEqual({ status: "complete", attempts: 1 });
+
+		const duplicate = await worker.fetch(
+			new Request("https://example.com/telegram/webhook", {
+				method: "POST",
+				headers: { "X-Telegram-Bot-Api-Secret-Token": "test-webhook-secret" },
+				body: JSON.stringify({ update_id: 1, message: { message_id: 1, date: 0, chat: { id: 1, type: "private" }, from: { id: 1, is_bot: false, first_name: "Test" }, text: "hi" } }),
+			}),
+			testEnv,
+			createExecutionContext(),
+		);
+		expect(duplicate.status).toBe(200);
+		expect(await env.DB.prepare("SELECT attempts FROM processed_updates WHERE update_id = 1").first()).toEqual({ attempts: 1 });
 	});
 
 	it("serves health checks", async () => {
 		const response = await SELF.fetch("https://example.com/health");
 		expect(await response.json()).toEqual({ ok: true });
+	});
+});
+
+describe("update claims", () => {
+	it("reclaims failed work but not fresh or completed work", async () => {
+		expect(await claimUpdate(env.DB, 7001, "req-1", 1_000)).toBe(true);
+		expect(await claimUpdate(env.DB, 7001, "req-2", 1_001)).toBe(false);
+		await failUpdate(env.DB, 7001, new Error("temporary"), 1_002);
+		expect(await claimUpdate(env.DB, 7001, "req-3", 1_003)).toBe(true);
+		await completeUpdate(env.DB, 7001, 1_004);
+		expect(await claimUpdate(env.DB, 7001, "req-4", 1_005)).toBe(false);
 	});
 });
 
