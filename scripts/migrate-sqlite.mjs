@@ -36,7 +36,7 @@ report.counts.topics = topics.length;
 for (const row of topics) {
 	if (row.user_id == null || row.thread_id == null) { report.skipped.push({ table: "topics", reason: "missing identifiers" }); continue; }
 	up.push(`INSERT OR IGNORE INTO topics (id, user_id, thread_id, note, created_at, updated_at) VALUES (${Number(row.id) || "NULL"}, ${quote(row.user_id)}, ${quote(row.thread_id)}, ${quote(row.note)}, ${now}, ${now});`);
-	rollback.push(`DELETE FROM topics WHERE id = ${Number(row.id) || "NULL"};`);
+	rollback.push(`DELETE FROM topics WHERE id = ${Number(row.id) || "NULL"} AND created_at = ${now} AND updated_at = ${now};`);
 }
 
 const messages = rows("messages");
@@ -44,7 +44,7 @@ report.counts.messages = messages.length;
 for (const row of messages) {
 	if (row.topic_id == null || row.received_id == null || row.forwarded_id == null) { report.skipped.push({ table: "messages", reason: "missing identifiers" }); continue; }
 	up.push(`INSERT OR IGNORE INTO messages (topic_id, received_id, forwarded_id, in_group, created_at) VALUES (${Number(row.topic_id)}, ${quote(row.received_id)}, ${quote(row.forwarded_id)}, ${row.in_group ? 1 : 0}, ${now});`);
-	rollback.push(`DELETE FROM messages WHERE topic_id = ${Number(row.topic_id)} AND received_id = ${quote(row.received_id)} AND forwarded_id = ${quote(row.forwarded_id)};`);
+	rollback.push(`DELETE FROM messages WHERE topic_id = ${Number(row.topic_id)} AND received_id = ${quote(row.received_id)} AND forwarded_id = ${quote(row.forwarded_id)} AND created_at = ${now};`);
 }
 
 const settings = rows("settings");
@@ -63,13 +63,20 @@ const copyRows = (table, columns, transform = (row) => row) => {
 		if (!row) continue;
 		up.push(`INSERT OR IGNORE INTO ${table} (${columns.join(", ")}) VALUES (${columns.map((column) => quote(row[column])).join(", ")});`);
 		const key = table === "user_permission_overrides" ? `user_id = ${quote(row.user_id)} AND permission_key = ${quote(row.permission_key)}` : table === "auto_responses" ? `trigger = ${quote(row.trigger)}` : `user_id = ${quote(row.user_id)}`;
-		rollback.push(`DELETE FROM ${table} WHERE ${key};`);
+		const timestampColumn = table === "verified_users" ? "verified_at" : table === "blocked_users" ? "blocked_at" : table === "user_permission_overrides" ? "updated_at" : null;
+		rollback.push(`DELETE FROM ${table} WHERE ${key}${timestampColumn ? ` AND ${timestampColumn} = ${now}` : ` AND 1 = 1`};`);
 	}
 };
 copyRows("verified_users", ["user_id", "verified_at"], (row) => ({ user_id: String(row.user_id), verified_at: now }));
 copyRows("blocked_users", ["user_id", "username", "first_name", "last_name", "blocked_at"], (row) => ({ user_id: String(row.user_id), username: row.username, first_name: row.first_name, last_name: row.last_name, blocked_at: now }));
 copyRows("user_permission_overrides", ["user_id", "permission_key", "override", "updated_at"], (row) => ({ user_id: String(row.user_id), permission_key: row.permission_key, override: row.override, updated_at: now }));
-copyRows("auto_responses", ["trigger", "response", "response_type", "is_regex", "start_time", "end_time", "time_zone", "enabled"], (row) => ({ trigger: row.key, response: row.value, response_type: row.type ?? "text", is_regex: row.is_regex ? 1 : 0, start_time: row.start_time, end_time: row.end_time, time_zone: "UTC", enabled: 1 }));
+const autoResponses = rows("auto_responses");
+report.counts.auto_responses = autoResponses.length;
+for (const original of autoResponses) {
+	const row = { trigger: original.key, response: original.value, response_type: original.type ?? "text", is_regex: original.is_regex ? 1 : 0, start_time: original.start_time, end_time: original.end_time, time_zone: "UTC", enabled: 1 };
+	up.push(`INSERT INTO auto_responses (trigger, response, response_type, is_regex, start_time, end_time, time_zone, enabled) SELECT ${quote(row.trigger)}, ${quote(row.response)}, ${quote(row.response_type)}, ${quote(row.is_regex)}, ${quote(row.start_time)}, ${quote(row.end_time)}, ${quote(row.time_zone)}, ${quote(row.enabled)} WHERE NOT EXISTS (SELECT 1 FROM auto_responses WHERE trigger = ${quote(row.trigger)});`);
+	rollback.push(`DELETE FROM auto_responses WHERE trigger = ${quote(row.trigger)} AND response = ${quote(row.response)};`);
+}
 
 up.push("COMMIT;");
 rollback.push("COMMIT;");
