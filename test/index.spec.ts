@@ -3,10 +3,12 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
 import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
+import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
+import { answerCaptcha, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import worker from "../src/index";
 
 const testEnv = {
@@ -29,6 +31,7 @@ const migrations = [
 	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
 	{ name: "0002_phase_1.sql", queries: phase1MigrationSql.split(";").filter(Boolean) },
 	{ name: "0003_phase_3.sql", queries: phase3MigrationSql.split(";").filter(Boolean) },
+	{ name: "0004_phase_4.sql", queries: phase4MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -43,6 +46,11 @@ afterEach(async () => {
 	await env.DB.exec("DELETE FROM settings");
 	await env.DB.exec("DELETE FROM observed_invite_links");
 	await env.DB.exec("DELETE FROM chat_id_resolution_audits");
+	await env.DB.exec("DELETE FROM auto_responses");
+	await env.DB.exec("DELETE FROM blocked_users");
+	await env.DB.exec("DELETE FROM verified_users");
+	await env.DB.exec("DELETE FROM user_permission_overrides");
+	await env.DB.exec("DELETE FROM captcha_challenges");
 });
 
 describe("Telegram webhook", () => {
@@ -148,6 +156,19 @@ describe("observed invite resolution", () => {
 		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-2")).resolves.toEqual({ status: 200, chatId: "-100555" });
 		await expect(resolveInviteLink(env.DB, "http://t.me/+known-token", "req-3")).resolves.toMatchObject({ status: 400, error: "invalid_invite_link" });
 		expect(await env.DB.prepare("SELECT hash FROM observed_invite_links").first()).toEqual({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+	});
+});
+
+describe("policy helpers", () => {
+	it("bounds regexes, handles overnight windows, and expires captcha answers", async () => {
+		expect(validateRegex("(a+)+")).toBe(false);
+		expect(matchesTrigger("hello world", "world", false)).toBe(true);
+		expect(isWithinTimeWindow(new Date("2026-09-22T23:30:00Z"), "22:00", "02:00", "UTC")).toBe(true);
+		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 10, 0).run();
+		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(false);
+		await env.DB.prepare("INSERT OR REPLACE INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 100, 0).run();
+		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(true);
+		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
 	});
 });
 

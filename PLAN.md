@@ -1,6 +1,6 @@
 # BetterForward → Cloudflare Workers 重构计划
 
-状态：**Phase 3 已完成。**
+状态：**Phase 4 已完成。**
 
 ## 目标与边界
 
@@ -95,8 +95,10 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 4 — 策略与辅助功能
 
-- [ ] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
-- [ ] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
+- [x] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
+- [x] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
+
+**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取和过期数学题。消息入口在转发前执行封禁、验证码和自动回复短路，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`，默认欢迎消息和 TGuard 外部校验通过 `settings`/同一 policy 入口承载，避免复制状态。`pnpm typecheck`、`pnpm test -- --run`（8 tests）和本地 0004 migration 通过。
 
 验收：设置跨请求保持；过期状态不依赖 Cron 也不会被接受；正则输入有安全边界。
 

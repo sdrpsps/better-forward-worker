@@ -52,6 +52,55 @@ export const chatIdResolutionAudits = sqliteTable("chat_id_resolution_audits", {
 	createdAt: integer("created_at").notNull(),
 });
 
+export const autoResponses = sqliteTable("auto_responses", {
+	id: integer("id").primaryKey({ autoIncrement: true }),
+	trigger: text("trigger").notNull(),
+	response: text("response").notNull(),
+	responseType: text("response_type", { enum: ["text", "media"] }).notNull(),
+	isRegex: integer("is_regex", { mode: "boolean" }).notNull(),
+	startTime: text("start_time"),
+	endTime: text("end_time"),
+	timeZone: text("time_zone").notNull(),
+	enabled: integer("enabled", { mode: "boolean" }).notNull(),
+});
+
+export const blockedUsers = sqliteTable("blocked_users", {
+	userId: text("user_id").primaryKey(),
+	username: text("username"),
+	firstName: text("first_name"),
+	lastName: text("last_name"),
+	blockedAt: integer("blocked_at").notNull(),
+});
+
+export const verifiedUsers = sqliteTable("verified_users", {
+	userId: text("user_id").primaryKey(),
+	verifiedAt: integer("verified_at").notNull(),
+});
+
+export const userPermissionOverrides = sqliteTable(
+	"user_permission_overrides",
+	{
+		userId: text("user_id").notNull(),
+		permissionKey: text("permission_key").notNull(),
+		override: text("override", { enum: ["allow", "deny"] }).notNull(),
+		updatedAt: integer("updated_at").notNull(),
+	},
+	(table) => [primaryKey({ columns: [table.userId, table.permissionKey] })],
+);
+
+export const captchaChallenges = sqliteTable("captcha_challenges", {
+	userId: text("user_id").primaryKey(),
+	leftOperand: integer("left_operand").notNull(),
+	rightOperand: integer("right_operand").notNull(),
+	expiresAt: integer("expires_at").notNull(),
+	attempts: integer("attempts").notNull(),
+});
+
+export const spamKeywords = sqliteTable("spam_keywords", {
+	keyword: text("keyword").primaryKey(),
+	createdAt: integer("created_at").notNull(),
+});
+
 export const processedUpdates = sqliteTable("processed_updates", {
 	updateId: integer("update_id").primaryKey(),
 	status: text("status", { enum: ["claimed", "complete", "failed"] }).notNull(),

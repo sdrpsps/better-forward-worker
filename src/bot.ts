@@ -7,6 +7,7 @@ import type { WorkerEnv } from "./app";
 import { editEditedMessage, forwardMessage, handleUserCommand, syncReaction } from "./forwarding";
 import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-flow";
 import { observeInviteLink } from "./chat-id";
+import { handleIncomingPolicy } from "./policy";
 
 export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query", "chat_join_request"] as const;
 export const MAX_CONNECTIONS = 40;
@@ -45,6 +46,7 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 	});
 	bot.on("message", async (ctx, next) => {
 		if (await handleAdminInput(ctx as never)) return;
+		if (await handleIncomingPolicy(ctx as never)) return;
 		if (await handleUserCommand(ctx)) return;
 		await forwardMessage(ctx);
 		await next();
