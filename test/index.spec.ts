@@ -1,5 +1,5 @@
 import { applyD1Migrations, env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
 import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
@@ -11,7 +11,7 @@ import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
-import { enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
+import { consumeBroadcast, enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 import { webhookSetupOptions } from "../src/bot";
 
@@ -284,6 +284,18 @@ describe("broadcast queue", () => {
 		await recordDeliveryEvent(env.DB, "delivered");
 		await recordDeliveryEvent(env.DB, "failed", "telegram_error");
 		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events ORDER BY id").all()).toMatchObject({ results: [{ status: "delivered", detail: null }, { status: "failed", detail: "telegram_error" }] });
+	});
+
+	it("retries Telegram 429s and records the failed delivery", async () => {
+		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
+		const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: false, error_code: 429, description: "Too Many Requests" }), { headers: { "content-type": "application/json" } }));
+		const retry = vi.fn();
+		const ack = vi.fn();
+		await consumeBroadcast({ messages: [{ id: "queue-1", body: { sourceChatId: "-100123", sourceMessageId: 9 }, attempts: 1, retry, ack }] } as never, testEnv);
+		fetch.mockRestore();
+		expect(retry).toHaveBeenCalledWith({ delaySeconds: 2 });
+		expect(ack).not.toHaveBeenCalled();
+		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events").all()).toMatchObject({ results: [{ status: "failed", detail: "retrying" }] });
 	});
 });
 
