@@ -101,6 +101,14 @@ export const spamKeywords = sqliteTable("spam_keywords", {
 	createdAt: integer("created_at").notNull(),
 });
 
+export const deliveryEvents = sqliteTable("delivery_events", {
+	id: integer("id").primaryKey({ autoIncrement: true }),
+	kind: text("kind").notNull(),
+	status: text("status").notNull(),
+	detail: text("detail"),
+	createdAt: integer("created_at").notNull(),
+});
+
 export const processedUpdates = sqliteTable("processed_updates", {
 	updateId: integer("update_id").primaryKey(),
 	status: text("status", { enum: ["claimed", "complete", "failed"] }).notNull(),

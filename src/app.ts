@@ -3,12 +3,14 @@ import { createBot, createWebhookHandler } from "./bot";
 import { readInternalApiSecret, readWebhookConfig } from "./env";
 import { webhookSetupOptions } from "./bot";
 import { resolveInviteLink } from "./chat-id";
+import { enqueueBroadcast } from "./broadcast";
 
 export type WorkerEnv = {
 	BOT_INFO_JSON: string;
 	BOT_TOKEN: string;
 	DB: D1Database;
 	FORWARD_GROUP_ID?: string;
+	BROADCAST_QUEUE?: Queue<import("./broadcast").BroadcastJob>;
 	INTERNAL_API_SECRET?: string;
 	TELEGRAM_WEBHOOK_SECRET: string;
 };
@@ -27,6 +29,23 @@ export function createApp() {
 		const result = await resolveInviteLink(context.env.DB, body.invite_link, context.req.header("X-Request-ID") ?? crypto.randomUUID());
 		if (result.status !== 200) return context.json({ error: result.error }, result.status);
 		return context.json({ chat_id: result.chatId });
+	});
+
+	app.post("/internal/broadcast", async (context) => {
+		if (context.req.header("Authorization") !== `Bearer ${readInternalApiSecret(context.env)}`) return context.json({ error: "unauthorized" }, 401);
+		const body = await context.req.json<{ source_chat_id?: string; source_message_id?: number }>().catch(() => ({ source_chat_id: undefined, source_message_id: undefined }));
+		const sourceChatId = body.source_chat_id;
+		const sourceMessageId = body.source_message_id;
+		if (!sourceChatId || typeof sourceMessageId !== "number" || !Number.isInteger(sourceMessageId) || sourceMessageId < 1) return context.json({ error: "invalid_broadcast" }, 400);
+		await enqueueBroadcast(context.env.BROADCAST_QUEUE, { sourceChatId, sourceMessageId });
+		return context.json({ accepted: true }, 202);
+	});
+
+	app.get("/internal/metrics", async (context) => {
+		if (context.req.header("Authorization") !== `Bearer ${readInternalApiSecret(context.env)}`) return context.json({ error: "unauthorized" }, 401);
+		const queue = context.env.BROADCAST_QUEUE ? await context.env.BROADCAST_QUEUE.metrics() : null;
+		const failedUpdates = await context.env.DB.prepare("SELECT COUNT(*) AS count FROM processed_updates WHERE status = 'failed'").first();
+		return context.json({ queue, failedUpdates });
 	});
 
 	app.get("/internal/webhook/status", async (context) => {

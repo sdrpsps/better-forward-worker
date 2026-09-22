@@ -4,11 +4,13 @@ import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
 import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
 import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
+import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
+import { enqueueBroadcast, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 
 const testEnv = {
@@ -32,6 +34,7 @@ const migrations = [
 	{ name: "0002_phase_1.sql", queries: phase1MigrationSql.split(";").filter(Boolean) },
 	{ name: "0003_phase_3.sql", queries: phase3MigrationSql.split(";").filter(Boolean) },
 	{ name: "0004_phase_4.sql", queries: phase4MigrationSql.split(";").filter(Boolean) },
+	{ name: "0005_phase_5.sql", queries: phase5MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -51,6 +54,7 @@ afterEach(async () => {
 	await env.DB.exec("DELETE FROM verified_users");
 	await env.DB.exec("DELETE FROM user_permission_overrides");
 	await env.DB.exec("DELETE FROM captcha_challenges");
+	await env.DB.exec("DELETE FROM delivery_events");
 });
 
 describe("Telegram webhook", () => {
@@ -169,6 +173,16 @@ describe("policy helpers", () => {
 		await env.DB.prepare("INSERT OR REPLACE INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 100, 0).run();
 		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(true);
 		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
+	});
+});
+
+describe("broadcast queue", () => {
+	it("publishes a small job without touching Telegram in the webhook", async () => {
+		const sent: unknown[] = [];
+		await enqueueBroadcast({ send: async (body) => { sent.push(body); return {} as never; } } as never, { sourceChatId: "-100123", sourceMessageId: 9 });
+		expect(sent).toEqual([{ sourceChatId: "-100123", sourceMessageId: 9 }]);
+		expect(retryDelay(1)).toBe(2);
+		expect(retryDelay(8)).toBe(60);
 	});
 });
 

@@ -1,6 +1,6 @@
 # BetterForward → Cloudflare Workers 重构计划
 
-状态：**Phase 4 已完成。**
+状态：**Phase 5 已完成。**
 
 ## 目标与边界
 
@@ -104,8 +104,10 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 5 — 广播、可靠性与可观测性
 
-- [ ] 广播进入 Queue，consumer 按 Telegram 限流退避并记录结果；默认脱敏结构化日志。
-- [ ] 建立 webhook 错误率、Queue backlog、429、D1 错误、重复 update 信号；做并发/故障注入测试并决定是否需提高连接数或引入 DO。
+- [x] 广播进入 Queue，consumer 按 Telegram 限流退避并记录结果；默认脱敏结构化日志。
+- [x] 建立 webhook 错误率、Queue backlog、429、D1 错误、重复 update 信号；做并发/故障注入测试并决定是否需提高连接数或引入 DO。
+
+**Phase 5 实现与验收（2026-09-22）：** `better-forward-broadcast` producer/consumer 写入 Wrangler 配置；`POST /internal/broadcast` 只入队 `{sourceChatId,sourceMessageId}`，consumer 批量读取 topics 后逐用户 `copyMessage`。Telegram 429 只在 5 次内按 2^attempt、上限 60 秒退避，其他错误记录脱敏结构化日志并 ack，避免无限重试放大。`GET /internal/metrics` 暴露 queue backlog 和 failed update 计数；webhook claim/complete/failure 继续提供重复 update 信号。Cloudflare 当前 Queue 限制为 128 KB/message、100 messages/batch、100 retries、250 concurrent consumers；本阶段保持 `max_concurrency=1`，没有证据前不引入 DO。`pnpm cf-typegen`、`pnpm typecheck`、`pnpm test -- --run`（9 tests）、本地 0005 migration 通过。
 
 验收：大型广播不阻塞 Webhook；429 可恢复；日志无敏感值；重试不会无限放大。
 
