@@ -151,6 +151,29 @@ describe("bidirectional forwarding", () => {
 		expect(calls[1]).toEqual(["copyMessage", "-100123", "42", 10, { message_thread_id: 99 }]);
 		expect(calls[2]).toEqual(["copyMessage", "42", "-100123", 30, { reply_parameters: { message_id: 10 } }]);
 	});
+
+	it("recreates a deleted forum topic and retries once", async () => {
+		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
+		const calls: unknown[][] = [];
+		let copies = 0;
+		const api = {
+			createForumTopic: async (...args: unknown[]) => { calls.push(["createForumTopic", ...args]); return { message_thread_id: 100, name: "Test", icon_color: 0 }; },
+			copyMessage: async (...args: unknown[]) => {
+				calls.push(["copyMessage", ...args]);
+				copies += 1;
+				if (copies === 1) throw new Error("Bad Request: message thread not found");
+				return 20;
+			},
+		};
+		await forwardMessage({
+			env: forwardEnv,
+			api,
+			message: { message_id: 10, date: 0, chat: { id: 42, type: "private" }, from: { id: 42, is_bot: false, first_name: "Test" }, text: "hello" },
+		} as never);
+		expect(calls.filter(([name]) => name === "createForumTopic")).toHaveLength(1);
+		expect(calls.filter(([name]) => name === "copyMessage")).toHaveLength(2);
+		expect(await env.DB.prepare("SELECT thread_id FROM topics WHERE user_id = '42'").first()).toEqual({ thread_id: "100" });
+	});
 });
 
 describe("observed invite resolution", () => {

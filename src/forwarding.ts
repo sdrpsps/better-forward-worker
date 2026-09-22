@@ -7,6 +7,7 @@ import { readForwardGroupId } from "./env";
 import { isGroupAdmin } from "./admin-flow";
 
 type MessageContext = BotContext & { message: Message };
+type Topic = NonNullable<Awaited<ReturnType<typeof findTopic>>>;
 
 const topicName = (message: Message) => {
 	const user = message.from;
@@ -57,6 +58,17 @@ async function ensureTopic(ctx: MessageContext, groupId: string) {
 	return findTopic(ctx.env.DB, eq(topics.userId, String(ctx.message.chat.id)));
 }
 
+function isMissingTopic(error: unknown) {
+	const detail = error instanceof Error ? error.message : String(error);
+	return /message thread not found|thread not found|TOPIC_ID_INVALID/i.test(detail);
+}
+
+async function recreateTopic(ctx: MessageContext, groupId: string, topic: Topic) {
+	const created = await ctx.api.createForumTopic(groupId, topicName(ctx.message));
+	await createDb(ctx.env.DB).update(topics).set({ threadId: String(created.message_thread_id), updatedAt: Date.now() }).where(eq(topics.id, topic.id));
+	return { ...topic, threadId: String(created.message_thread_id) };
+}
+
 async function forwardToUser(ctx: MessageContext, groupId: string) {
 	if (ctx.message.chat.id.toString() !== groupId || ctx.message.message_thread_id == null) return;
 	const topic = await findTopic(ctx.env.DB, eq(topics.threadId, String(ctx.message.message_thread_id)));
@@ -69,15 +81,25 @@ async function forwardToUser(ctx: MessageContext, groupId: string) {
 }
 
 async function forwardToGroup(ctx: MessageContext, groupId: string) {
-	const topic = await ensureTopic(ctx, groupId);
+	let topic = await ensureTopic(ctx, groupId);
 	if (!topic) return;
-	const reply = ctx.message.reply_to_message
-		? await findMapping(ctx.env.DB, topic.id, String(ctx.message.reply_to_message.message_id), true)
-		: null;
-	const copied = await ctx.api.copyMessage(groupId, String(ctx.message.chat.id), ctx.message.message_id, {
-		message_thread_id: Number(topic.threadId),
-		...(reply ? { reply_parameters: { message_id: Number(reply.forwardedId) } } : {}),
-	});
+	const copy = async (current: Topic) => {
+		const reply = ctx.message.reply_to_message
+			? await findMapping(ctx.env.DB, current.id, String(ctx.message.reply_to_message.message_id), true)
+			: null;
+		return ctx.api.copyMessage(groupId, String(ctx.message.chat.id), ctx.message.message_id, {
+			message_thread_id: Number(current.threadId),
+			...(reply ? { reply_parameters: { message_id: Number(reply.forwardedId) } } : {}),
+		});
+	};
+	let copied: number;
+	try {
+		copied = Number(await copy(topic));
+	} catch (error) {
+		if (!isMissingTopic(error)) throw error;
+		topic = await recreateTopic(ctx, groupId, topic);
+		copied = Number(await copy(topic));
+	}
 	await saveMapping(ctx.env.DB, topic.id, ctx.message.message_id, Number(copied), false);
 }
 
