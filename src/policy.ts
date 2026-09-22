@@ -1,6 +1,6 @@
 import { and, eq } from "drizzle-orm";
 import { createDb } from "./db";
-import { autoResponses, blockedUsers, captchaChallenges, settings, userPermissionOverrides, verifiedUsers } from "./db/schema";
+import { autoResponses, blockedUsers, captchaChallenges, settings, spamKeywords, userPermissionOverrides, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
 
 export const translations = {
@@ -73,12 +73,31 @@ export async function answerCaptcha(binding: D1Database, userId: string, answer:
 	return true;
 }
 
+async function sendAutoResponse(ctx: BotContext, response: string) {
+	const [kind, fileId] = response.split(":", 2);
+	if (!fileId) return ctx.reply(response);
+	if (kind === "photo") return ctx.api.sendPhoto(ctx.chat!.id, fileId);
+	if (kind === "video") return ctx.api.sendVideo(ctx.chat!.id, fileId);
+	if (kind === "document") return ctx.api.sendDocument(ctx.chat!.id, fileId);
+	if (kind === "audio") return ctx.api.sendAudio(ctx.chat!.id, fileId);
+	if (kind === "voice") return ctx.api.sendVoice(ctx.chat!.id, fileId);
+	if (kind === "animation") return ctx.api.sendAnimation(ctx.chat!.id, fileId);
+	return ctx.reply(response);
+}
+
 export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: { type: string }; from?: { id: number }; text?: string }; reply: (text: string) => Promise<unknown> }) {
 	if (ctx.message.chat.type !== "private" || !ctx.message.from) return false;
 	const userId = String(ctx.message.from.id);
 	if (await isBlocked(ctx.env.DB, userId)) {
 		await ctx.reply(t("en", "blocked"));
 		return true;
+	}
+	if (ctx.message.text) {
+		const keywords = await createDb(ctx.env.DB).select({ keyword: spamKeywords.keyword }).from(spamKeywords).all();
+		if (keywords.some(({ keyword }) => ctx.message.text!.toLocaleLowerCase().includes(keyword.toLocaleLowerCase()))) {
+			await ctx.reply(t("en", "blocked"));
+			return true;
+		}
 	}
 	const captchaSetting = await createDb(ctx.env.DB).select().from(settings).where(eq(settings.key, "captcha")).get();
 	if (captchaSetting?.value === "enable" && !(await isVerified(ctx.env.DB, userId))) {
@@ -101,6 +120,7 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 	for (const rule of rules) {
 		if (matchesTrigger(ctx.message.text, rule.trigger, rule.isRegex) && isWithinTimeWindow(new Date(), rule.startTime, rule.endTime, rule.timeZone)) {
 			if (rule.responseType === "text") await ctx.reply(rule.response);
+			else await sendAutoResponse(ctx, rule.response);
 			break;
 		}
 	}

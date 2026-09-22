@@ -7,9 +7,9 @@ import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
-import { forwardMessage, handleAdminCommand } from "../src/forwarding";
+import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
-import { answerCaptcha, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
+import { answerCaptcha, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import { enqueueBroadcast, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 
@@ -225,6 +225,25 @@ describe("policy helpers", () => {
 		await env.DB.prepare("INSERT OR REPLACE INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 100, 0).run();
 		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(true);
 		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
+	});
+
+	it("blocks configured spam and sends media responses", async () => {
+		await env.DB.prepare("INSERT INTO spam_keywords (keyword, created_at) VALUES (?, ?)").bind("scam", 1).run();
+		const replies: string[] = [];
+		const blocked = await handleIncomingPolicy({ env: testEnv, message: { chat: { type: "private" }, from: { id: 42 }, text: "This is SCAM" }, reply: async (text: string) => { replies.push(text); } } as never);
+		expect(blocked).toBe(true);
+		expect(replies).toEqual(["You cannot send messages."]);
+		await env.DB.prepare("INSERT INTO auto_responses (trigger, response, response_type, is_regex, time_zone, enabled) VALUES (?, ?, ?, ?, ?, ?)").bind("photo", "photo:file-1", "media", 0, "UTC", 1).run();
+		const mediaCalls: unknown[][] = [];
+		await handleIncomingPolicy({ env: testEnv, chat: { id: 42 }, api: { sendPhoto: async (...args: unknown[]) => { mediaCalls.push(args); } }, message: { chat: { type: "private" }, from: { id: 43 }, text: "photo" }, reply: async () => {} } as never);
+		expect(mediaCalls).toEqual([[42, "file-1"]]);
+	});
+
+	it("uses the configured default welcome message", async () => {
+		await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("default_message", "Welcome back", 1).run();
+		const replies: string[] = [];
+		expect(await handleUserCommand({ env: testEnv, message: { chat: { id: 42, type: "private" }, text: "/start" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
+		expect(replies).toEqual(["Welcome back"]);
 	});
 });
 

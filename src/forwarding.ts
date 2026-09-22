@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Message } from "grammy/types";
 import { createDb } from "./db";
-import { blockedUsers, messages, topics, verifiedUsers } from "./db/schema";
+import { blockedUsers, messages, settings, topics, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
 import { readForwardGroupId } from "./env";
 import { isGroupAdmin } from "./admin-flow";
@@ -115,7 +115,8 @@ export async function handleUserCommand(ctx: MessageContext) {
 	if (!text?.startsWith("/")) return false;
 	const command = text.split(/\s+/, 1)[0];
 	if (command === "/start" || command === "/help") {
-		await ctx.reply("Tell me what you want to forward.");
+		const configured = await createDb(ctx.env.DB).select({ value: settings.value }).from(settings).where(eq(settings.key, "default_message")).get();
+		await ctx.reply(configured?.value || "Tell me what you want to forward.");
 		return true;
 	}
 	if (ctx.message.chat.type !== "private") return false;
