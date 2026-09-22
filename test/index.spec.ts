@@ -6,6 +6,7 @@ import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
 import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
+import { handleAdminCallback, handleAdminInput } from "../src/admin-flow";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
@@ -305,5 +306,12 @@ describe("D1 admin sessions", () => {
 			expiresAt: Date.now() - 1,
 		});
 		expect(await loadAdminSession(env.DB, "9007199254740993", "auto-response")).toBeNull();
+	});
+
+	it("persists menu settings through the D1 session flow", async () => {
+		const api = { getChatMember: async () => ({ status: "administrator" }) };
+		await handleAdminCallback({ env: testEnv, api, from: { id: 7 }, callbackQuery: { data: "admin:set:captcha", message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async () => {} } as never);
+		await handleAdminInput({ env: testEnv, from: { id: 7 }, message: { chat: { type: "private" }, text: "button" }, reply: async () => {} } as never);
+		expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'captcha'").first()).toEqual({ value: "button" });
 	});
 });

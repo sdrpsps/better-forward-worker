@@ -1,5 +1,7 @@
 import { InlineKeyboard, Keyboard } from "grammy";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "./admin-sessions";
+import { createDb } from "./db";
+import { settings } from "./db/schema";
 import type { BotContext } from "./bot";
 import { readForwardGroupId } from "./env";
 
@@ -16,7 +18,7 @@ export async function isGroupAdmin(ctx: BotContext, userId: number, chatId?: str
 export async function showAdminMenu(ctx: BotContext) {
 	if (!ctx.from || !(await isGroupAdmin(ctx, ctx.from.id, ctx.chat?.id.toString()))) return;
 	await ctx.reply("Admin settings", {
-		reply_markup: new InlineKeyboard().text("Set value", "admin:set").text("Choose group", "admin:request-chat").row().text("Cancel", "admin:cancel"),
+		reply_markup: new InlineKeyboard().text("Welcome message", "admin:set:default_message").text("Captcha", "admin:set:captcha").row().text("Choose group", "admin:request-chat").row().text("Cancel", "admin:cancel"),
 	});
 }
 
@@ -29,8 +31,10 @@ export async function handleAdminCallback(ctx: BotContext & { callbackQuery: { d
 		await ctx.editMessageText("Cancelled.");
 		return;
 	}
-	if (action === "admin:set") {
-		await saveAdminSession(ctx.env.DB, { adminId: String(ctx.from.id), scope: SCOPE, state: "awaiting-value", payload: {}, expiresAt: Date.now() + SESSION_TTL_MS });
+	if (action === "admin:set" || action.startsWith("admin:set:")) {
+		const key = action.slice("admin:set:".length) || "default_message";
+		if (key !== "default_message" && key !== "captcha") return;
+		await saveAdminSession(ctx.env.DB, { adminId: String(ctx.from.id), scope: SCOPE, state: "awaiting-value", payload: { key }, expiresAt: Date.now() + SESSION_TTL_MS });
 		await ctx.editMessageText("Send the value, or /cancel.");
 		return;
 	}
@@ -58,6 +62,8 @@ export async function handleAdminInput(ctx: BotContext & { message: { text?: str
 		return true;
 	}
 	if (session.state === "awaiting-value" && ctx.message.text) {
+		const key = typeof session.payload.key === "string" ? session.payload.key : null;
+		if (key) await createDb(ctx.env.DB).insert(settings).values({ key, value: ctx.message.text, updatedAt: Date.now() }).onConflictDoUpdate({ target: settings.key, set: { value: ctx.message.text, updatedAt: Date.now() } });
 		await saveAdminSession(ctx.env.DB, { ...session, state: "completed", payload: { value: ctx.message.text }, expiresAt: Date.now() + SESSION_TTL_MS });
 		await ctx.reply("Saved.");
 		return true;

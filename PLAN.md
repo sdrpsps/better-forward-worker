@@ -89,7 +89,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 迁移管理菜单/callback 和全部多步骤配置，支持取消、超时、并发管理员。
 - [x] 实现 `request_chat`、已观察邀请链接 hash→chat ID、内部解析接口、Bearer 鉴权、校验、限流、审计。
 
-**Phase 3 实现与验收（2026-09-22）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，Phase 4 的具体策略继续复用该状态机。`request_chat` 的 `chat_shared` 会先调用 `getChat/getChatMember` 验证机器人可见性。`src/chat-id.ts` 只规范化 `https://t.me/+...`/`joinchat/...`，保存 SHA-256 hash 和 chat ID；`chat_join_request` 观察链接，`POST /internal/chat-id/resolve` 独立 Bearer 鉴权，未知链接 422，所有结果写脱敏审计。`pnpm typecheck`、`pnpm test -- --run`（7 tests）和本地 0003 migration 通过。
+**Phase 3 实现与验收（2026-09-22）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，设置菜单会把 `default_message`/`captcha` 写入 D1，Phase 4 的具体策略继续复用该状态机。`request_chat` 的 `chat_shared` 会先调用 `getChat/getChatMember` 验证机器人可见性。`src/chat-id.ts` 只规范化 `https://t.me/+...`/`joinchat/...`，保存 SHA-256 hash 和 chat ID；`chat_join_request` 观察链接，`POST /internal/chat-id/resolve` 独立 Bearer 鉴权，未知链接 422，所有结果写脱敏审计。`pnpm typecheck`、`pnpm test -- --run`（18 tests）和本地 0003 migration 通过。
 
 验收：接口不泄露邀请链接；已知链接可解析，未知链接经测试返回明确 422；不以 obscurity 替代鉴权。
 
@@ -98,7 +98,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
 - [x] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
 
-**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本和 InlineKeyboard 按钮，callback 只接受发起用户且答案仍由 D1 challenge 校验；消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。TGuard 仍需真实 API/Mini App 契约和 secret，保留为部署前明确待办，不伪造外部验证结果。`pnpm typecheck`、`pnpm test -- --run`（17 tests）和 `git diff --check` 通过。
+**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本和 InlineKeyboard 按钮，callback 只接受发起用户且答案仍由 D1 challenge 校验；消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。TGuard 仍需真实 API/Mini App 契约和 secret，保留为部署前明确待办，不伪造外部验证结果。`pnpm typecheck`、`pnpm test -- --run`（18 tests）和 `git diff --check` 通过。
 
 验收：设置跨请求保持；过期状态不依赖 Cron 也不会被接受；正则输入有安全边界。
 
