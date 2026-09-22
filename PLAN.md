@@ -1,6 +1,6 @@
 # BetterForward → Cloudflare Workers 重构计划
 
-状态：**Phase 2 已完成。**
+状态：**Phase 3 已完成。**
 
 ## 目标与边界
 
@@ -86,8 +86,10 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 3 — 管理流程与私有群解析
 
-- [ ] 迁移管理菜单/callback 和全部多步骤配置，支持取消、超时、并发管理员。
-- [ ] 实现 `request_chat`、已观察邀请链接 hash→chat ID、内部解析接口、Bearer 鉴权、校验、限流、审计。
+- [x] 迁移管理菜单/callback 和全部多步骤配置，支持取消、超时、并发管理员。
+- [x] 实现 `request_chat`、已观察邀请链接 hash→chat ID、内部解析接口、Bearer 鉴权、校验、限流、审计。
+
+**Phase 3 实现与验收（2026-09-22）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，Phase 4 的具体策略继续复用该状态机。`request_chat` 的 `chat_shared` 会先调用 `getChat/getChatMember` 验证机器人可见性。`src/chat-id.ts` 只规范化 `https://t.me/+...`/`joinchat/...`，保存 SHA-256 hash 和 chat ID；`chat_join_request` 观察链接，`POST /internal/chat-id/resolve` 独立 Bearer 鉴权，未知链接 422，所有结果写脱敏审计。`pnpm typecheck`、`pnpm test -- --run`（7 tests）和本地 0003 migration 通过。
 
 验收：接口不泄露邀请链接；已知链接可解析，未知链接经测试返回明确 422；不以 obscurity 替代鉴权。
 

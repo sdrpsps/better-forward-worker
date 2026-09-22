@@ -2,9 +2,11 @@ import { applyD1Migrations, env, createExecutionContext, waitOnExecutionContext,
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
 import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
+import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage } from "../src/forwarding";
+import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import worker from "../src/index";
 
 const testEnv = {
@@ -26,6 +28,7 @@ const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
 const migrations = [
 	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
 	{ name: "0002_phase_1.sql", queries: phase1MigrationSql.split(";").filter(Boolean) },
+	{ name: "0003_phase_3.sql", queries: phase3MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -38,6 +41,8 @@ afterEach(async () => {
 	await env.DB.exec("DELETE FROM messages");
 	await env.DB.exec("DELETE FROM topics");
 	await env.DB.exec("DELETE FROM settings");
+	await env.DB.exec("DELETE FROM observed_invite_links");
+	await env.DB.exec("DELETE FROM chat_id_resolution_audits");
 });
 
 describe("Telegram webhook", () => {
@@ -133,6 +138,16 @@ describe("bidirectional forwarding", () => {
 		expect(await env.DB.prepare("SELECT received_id, forwarded_id, in_group FROM messages ORDER BY id").all()).toMatchObject({ results: [{ received_id: "10", forwarded_id: "20", in_group: 0 }, { received_id: "30", forwarded_id: "21", in_group: 1 }] });
 		expect(calls[1]).toEqual(["copyMessage", "-100123", "42", 10, { message_thread_id: 99 }]);
 		expect(calls[2]).toEqual(["copyMessage", "42", "-100123", 30, { reply_parameters: { message_id: 10 } }]);
+	});
+});
+
+describe("observed invite resolution", () => {
+	it("only resolves links previously observed and stores hashes, not URLs", async () => {
+		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-1")).resolves.toMatchObject({ status: 422, error: "invite_link_not_observed" });
+		await expect(observeInviteLink(env.DB, "https://t.me/+known-token", "-100555")).resolves.toBe(true);
+		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-2")).resolves.toEqual({ status: 200, chatId: "-100555" });
+		await expect(resolveInviteLink(env.DB, "http://t.me/+known-token", "req-3")).resolves.toMatchObject({ status: 400, error: "invalid_invite_link" });
+		expect(await env.DB.prepare("SELECT hash FROM observed_invite_links").first()).toEqual({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) });
 	});
 });
 

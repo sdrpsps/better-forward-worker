@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { createBot, createWebhookHandler } from "./bot";
 import { readInternalApiSecret, readWebhookConfig } from "./env";
 import { webhookSetupOptions } from "./bot";
+import { resolveInviteLink } from "./chat-id";
 
 export type WorkerEnv = {
 	BOT_INFO_JSON: string;
@@ -16,6 +17,17 @@ export function createApp() {
 	const app = new Hono<{ Bindings: WorkerEnv }>();
 
 	app.get("/health", (context) => context.json({ ok: true }));
+
+	app.post("/internal/chat-id/resolve", async (context) => {
+		if (context.req.header("Authorization") !== `Bearer ${readInternalApiSecret(context.env)}`) {
+			return context.json({ error: "unauthorized" }, 401);
+		}
+		const body = await context.req.json<{ invite_link?: string }>().catch(() => ({ invite_link: undefined }));
+		if (!body.invite_link) return context.json({ error: "invalid_invite_link" }, 400);
+		const result = await resolveInviteLink(context.env.DB, body.invite_link, context.req.header("X-Request-ID") ?? crypto.randomUUID());
+		if (result.status !== 200) return context.json({ error: result.error }, result.status);
+		return context.json({ chat_id: result.chatId });
+	});
 
 	app.get("/internal/webhook/status", async (context) => {
 		if (context.req.header("Authorization") !== `Bearer ${readInternalApiSecret(context.env)}`) {

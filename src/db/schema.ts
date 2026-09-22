@@ -38,6 +38,20 @@ export const settings = sqliteTable("settings", {
 	updatedAt: integer("updated_at").notNull(),
 });
 
+export const observedInviteLinks = sqliteTable("observed_invite_links", {
+	hash: text("hash").primaryKey(),
+	chatId: text("chat_id").notNull(),
+	observedAt: integer("observed_at").notNull(),
+});
+
+export const chatIdResolutionAudits = sqliteTable("chat_id_resolution_audits", {
+	id: integer("id").primaryKey({ autoIncrement: true }),
+	hash: text("hash").notNull(),
+	result: text("result", { enum: ["resolved", "not_observed", "invalid"] }).notNull(),
+	requestId: text("request_id").notNull(),
+	createdAt: integer("created_at").notNull(),
+});
+
 export const processedUpdates = sqliteTable("processed_updates", {
 	updateId: integer("update_id").primaryKey(),
 	status: text("status", { enum: ["claimed", "complete", "failed"] }).notNull(),

@@ -5,8 +5,10 @@ import { createDb } from "./db";
 import { claimUpdate, completeUpdate, failUpdate } from "./updates";
 import type { WorkerEnv } from "./app";
 import { editEditedMessage, forwardMessage, handleUserCommand, syncReaction } from "./forwarding";
+import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-flow";
+import { observeInviteLink } from "./chat-id";
 
-export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query"] as const;
+export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query", "chat_join_request"] as const;
 export const MAX_CONNECTIONS = 40;
 
 type Logger = Pick<Console, "debug" | "info" | "warn" | "error">;
@@ -42,9 +44,17 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 		}
 	});
 	bot.on("message", async (ctx, next) => {
+		if (await handleAdminInput(ctx as never)) return;
 		if (await handleUserCommand(ctx)) return;
 		await forwardMessage(ctx);
 		await next();
+	});
+	bot.command("admin", showAdminMenu);
+	bot.callbackQuery(/^admin:/, handleAdminCallback);
+	bot.on("chat_join_request", async (ctx) => {
+		const request = ctx.chatJoinRequest;
+		const link = request?.invite_link?.invite_link;
+		if (link) await observeInviteLink(ctx.env.DB, link, String(request.chat.id));
 	});
 	bot.on("edited_message", editEditedMessage);
 	bot.on("message_reaction", syncReaction);
