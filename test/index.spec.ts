@@ -28,6 +28,7 @@ const testEnv = {
 	}),
 	BOT_TOKEN: "123456:test-token",
 	TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+	INTERNAL_API_SECRET: "internal-secret",
 };
 const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
 
@@ -296,6 +297,14 @@ describe("broadcast queue", () => {
 		expect(retry).toHaveBeenCalledWith({ delaySeconds: 2 });
 		expect(ack).not.toHaveBeenCalled();
 		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events").all()).toMatchObject({ results: [{ status: "failed", detail: "retrying" }] });
+	});
+
+	it("exposes delivery and update failure metrics behind Bearer auth", async () => {
+		await env.DB.prepare("INSERT INTO processed_updates (update_id, status, attempts, request_id, claimed_at) VALUES (?, ?, ?, ?, ?)").bind(9001, "failed", 1, "req", 1).run();
+		await recordDeliveryEvent(env.DB, "failed", "telegram_error");
+		const response = await worker.fetch(new Request("https://example.com/internal/metrics", { headers: { Authorization: "Bearer internal-secret" } }), { ...testEnv, BROADCAST_QUEUE: { metrics: async () => ({ messages: 3 }) } } as never, createExecutionContext());
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({ failedUpdates: { count: 1 }, failedDeliveries: { count: 1 }, queue: { messages: 3 } });
 	});
 });
 
