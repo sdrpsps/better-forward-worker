@@ -71,11 +71,13 @@ export function createApp() {
 		}
 		const config = readWebhookConfig(context.env);
 		if (!config) return context.json({ error: "webhook_not_configured" }, 500);
-		const body = await context.req.json<{ url?: string }>().catch(() => ({ url: undefined }));
+		const body = await context.req.json<{ url?: string; drop_pending_updates?: boolean }>().catch(() => ({ url: undefined }));
 		if (!body.url || !URL.canParse(body.url)) return context.json({ error: "invalid_url" }, 400);
+		if (body.drop_pending_updates !== undefined && typeof body.drop_pending_updates !== "boolean") return context.json({ error: "invalid_drop_pending_updates" }, 400);
 		const bot = createBot(config.token, config.botInfo, context.env, context.req.header("X-Request-ID"));
-		await bot.api.setWebhook(body.url, webhookSetupOptions(config.secret));
-		return context.json({ ok: true, url: body.url, ...webhookSetupOptions(config.secret) });
+		const options = webhookSetupOptions(config.secret, body.drop_pending_updates === true);
+		await bot.api.setWebhook(body.url, options);
+		return context.json({ ok: true, url: body.url, ...options });
 	});
 
 	app.post("/telegram/webhook", async (context) => {

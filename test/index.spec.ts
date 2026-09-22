@@ -13,6 +13,7 @@ import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import { enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
+import { webhookSetupOptions } from "../src/bot";
 
 const testEnv = {
 	...env,
@@ -108,6 +109,11 @@ describe("Telegram webhook", () => {
 	it("serves health checks", async () => {
 		const response = await SELF.fetch("https://example.com/health");
 		expect(await response.json()).toEqual({ ok: true });
+	});
+
+	it("keeps pending updates unless an operator opts into dropping them", () => {
+		expect(webhookSetupOptions("secret").drop_pending_updates).toBe(false);
+		expect(webhookSetupOptions("secret", true).drop_pending_updates).toBe(true);
 	});
 });
 

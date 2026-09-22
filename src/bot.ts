@@ -20,11 +20,12 @@ export type BotContext = Context & {
 	logger: Logger;
 };
 
-export function webhookSetupOptions(secret: string) {
+export function webhookSetupOptions(secret: string, dropPendingUpdates = false) {
 	return {
 		secret_token: secret,
 		allowed_updates: [...ALLOWED_UPDATES],
 		max_connections: MAX_CONNECTIONS,
+		drop_pending_updates: dropPendingUpdates,
 	} as const;
 }
 

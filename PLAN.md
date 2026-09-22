@@ -117,7 +117,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 校验 topics、消息映射、settings、rules、verified/blocked 用户、权限记录计数；在测试 bot 回归。
 - [ ] 配置生产 secret、D1、Queue、Webhook，停止旧 polling、处理 pending updates、切换并观察重复/丢失；观察窗口后删除 Python/Docker/旧部署文档。
 
-**Phase 6 实现与验收（2026-09-22）：** `scripts/migrate-sqlite.mjs` 仅使用 Node 24 `node:sqlite` 在部署外读取旧库，生成 D1 可执行的 `up.sql`、`rollback.sql` 和 JSON 计数报告；`--dry-run` 不写 SQL/备份，`--backup` 复制源库，`--rollback report.json` 重建回滚 SQL，topic/message/settings/rules/verified/blocked/permission 均按稳定 key 幂等，重复迁移不会复制 auto response，settings 不覆盖目标已有值且 rollback 只删除本次写入值。`pnpm test:migration` 使用 Node 24 fixture 创建旧 schema、执行全部迁移 SQL、重复执行 up、校验各表计数并执行 rollback；另有 `pnpm typecheck`、`pnpm test -- --run`（17 tests）通过。生产 D1/Queue 创建、`wrangler secret put`、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口需要实际 Cloudflare/Telegram 凭据，因此保留为部署前 checklist，不在本地提交中宣称完成。
+**Phase 6 实现与验收（2026-09-22）：** `scripts/migrate-sqlite.mjs` 仅使用 Node 24 `node:sqlite` 在部署外读取旧库，生成 D1 可执行的 `up.sql`、`rollback.sql` 和 JSON 计数报告；`--dry-run` 不写 SQL/备份，`--backup` 复制源库，`--rollback report.json` 重建回滚 SQL，topic/message/settings/rules/verified/blocked/permission 均按稳定 key 幂等，重复迁移不会复制 auto response，settings 不覆盖目标已有值且 rollback 只删除本次写入值。内部 webhook setup 默认 `drop_pending_updates=false`，只有运维显式传入 true 才丢弃 pending updates。`pnpm test:migration` 使用 Node 24 fixture 创建旧 schema、执行全部迁移 SQL、重复执行 up、校验各表计数并执行 rollback；另有 `pnpm typecheck`、`pnpm test -- --run`（19 tests）通过。生产 D1/Queue 创建、`wrangler secret put`、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口需要实际 Cloudflare/Telegram 凭据，因此保留为部署前 checklist，不在本地提交中宣称完成。
 
 验收：迁移报告数量一致；生产 smoke test 通过；回滚经演练可执行。
 
