@@ -61,6 +61,11 @@ export async function permission(binding: D1Database, userId: string, key: strin
 	return row ? row.override === "allow" : defaultValue;
 }
 
+export async function canForward(binding: D1Database, userId: string) {
+	const global = await createDb(binding).select({ value: settings.value }).from(settings).where(eq(settings.key, "permission:forward")).get();
+	return permission(binding, userId, "forward", global?.value !== "deny");
+}
+
 export async function answerCaptcha(binding: D1Database, userId: string, answer: number, now = Date.now()) {
 	const db = createDb(binding);
 	const challenge = await db.select().from(captchaChallenges).where(eq(captchaChallenges.userId, userId)).get();
@@ -109,6 +114,10 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 	if (ctx.message.chat.type !== "private" || !ctx.message.from) return false;
 	const userId = String(ctx.message.from.id);
 	if (await isBlocked(ctx.env.DB, userId)) {
+		await ctx.reply(t("en", "blocked"));
+		return true;
+	}
+	if (!ctx.message.text?.startsWith("/") && !(await canForward(ctx.env.DB, userId))) {
 		await ctx.reply(t("en", "blocked"));
 		return true;
 	}

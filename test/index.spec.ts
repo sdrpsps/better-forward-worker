@@ -9,7 +9,7 @@ import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/a
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
-import { answerCaptcha, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
+import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import { enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 
@@ -254,6 +254,13 @@ describe("policy helpers", () => {
 		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
 		expect(callbacks).toEqual([{ text: "Saved." }]);
 		expect(edits).toEqual(["Saved."]);
+	});
+
+	it("applies global and per-user forwarding permissions", async () => {
+		await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("permission:forward", "deny", 1).run();
+		expect(await canForward(env.DB, "42")).toBe(false);
+		await env.DB.prepare("INSERT INTO user_permission_overrides (user_id, permission_key, override, updated_at) VALUES (?, ?, ?, ?)").bind("42", "forward", "allow", 2).run();
+		expect(await canForward(env.DB, "42")).toBe(true);
 	});
 });
 

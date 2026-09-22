@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import type { Message } from "grammy/types";
 import { createDb } from "./db";
-import { blockedUsers, messages, settings, topics, verifiedUsers } from "./db/schema";
+import { blockedUsers, messages, settings, topics, userPermissionOverrides, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
 import { readForwardGroupId } from "./env";
 import { isGroupAdmin } from "./admin-flow";
@@ -139,11 +139,32 @@ export async function handleUserCommand(ctx: MessageContext) {
 export async function handleAdminCommand(ctx: MessageContext) {
 	const text = ctx.message.text;
 	const groupId = readForwardGroupId(ctx.env);
-	if (!text?.startsWith("/") || !groupId || ctx.message.chat.id.toString() !== groupId || ctx.message.message_thread_id == null || !ctx.from) return false;
+	if (!text?.startsWith("/") || !groupId || ctx.message.chat.id.toString() !== groupId || !ctx.from) return false;
 	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
 	const [command, ...rest] = text.trim().split(/\s+/);
+	if (command === "/permission") {
+		const [key, decision] = rest;
+		if (!key || (decision !== "allow" && decision !== "deny")) {
+			await ctx.reply("Usage: /permission <key> <allow|deny>");
+			return true;
+		}
+		await createDb(ctx.env.DB).insert(settings).values({ key: `permission:${key}`, value: decision, updatedAt: Date.now() }).onConflictDoUpdate({ target: settings.key, set: { value: decision, updatedAt: Date.now() } });
+		await ctx.reply("Global permission saved.");
+		return true;
+	}
+	if (ctx.message.message_thread_id == null) return false;
 	const topic = await findTopic(ctx.env.DB, eq(topics.threadId, String(ctx.message.message_thread_id)));
 	if (!topic) return false;
+	if (command === "/allow" || command === "/deny") {
+		const key = rest[0];
+		if (!key) {
+			await ctx.reply(`Usage: ${command} <key>`);
+			return true;
+		}
+		await createDb(ctx.env.DB).insert(userPermissionOverrides).values({ userId: topic.userId, permissionKey: key, override: command === "/allow" ? "allow" : "deny", updatedAt: Date.now() }).onConflictDoUpdate({ target: [userPermissionOverrides.userId, userPermissionOverrides.permissionKey], set: { override: command === "/allow" ? "allow" : "deny", updatedAt: Date.now() } });
+		await ctx.reply("User permission saved.");
+		return true;
+	}
 	if (command === "/ban") {
 		await createDb(ctx.env.DB).insert(blockedUsers).values({ userId: topic.userId, username: null, firstName: null, lastName: null, blockedAt: Date.now() }).onConflictDoNothing();
 		await ctx.api.closeForumTopic(groupId, Number(topic.threadId));
