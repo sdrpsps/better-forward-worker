@@ -7,13 +7,21 @@
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
-		"cf-typegen": "wrangler types"
+		"cf-typegen": "wrangler types",
+		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.0.0",
 		"@types/node": "^26.6.2",
+		"drizzle-kit": "^0.31.11",
 		"typescript": "^5.5.2",
 		"vitest": "~4.1.0",
 		"wrangler": "^4.136.0"
+	},
+	"dependencies": {
+		"drizzle-orm": "^0.45.3",
+		"grammy": "^1.46.0",
+		"hono": "^4.13.8",
+		"zod": "^4.6.5"
 	}
 }
