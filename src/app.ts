@@ -45,7 +45,8 @@ export function createApp() {
 		if (context.req.header("Authorization") !== `Bearer ${readInternalApiSecret(context.env)}`) return context.json({ error: "unauthorized" }, 401);
 		const queue = context.env.BROADCAST_QUEUE ? await context.env.BROADCAST_QUEUE.metrics() : null;
 		const failedUpdates = await context.env.DB.prepare("SELECT COUNT(*) AS count FROM processed_updates WHERE status = 'failed'").first();
-		return context.json({ queue, failedUpdates });
+		const failedDeliveries = await context.env.DB.prepare("SELECT COUNT(*) AS count FROM delivery_events WHERE status = 'failed'").first();
+		return context.json({ queue, failedUpdates, failedDeliveries });
 	});
 
 	app.get("/internal/webhook/status", async (context) => {

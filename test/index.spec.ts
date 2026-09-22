@@ -10,7 +10,7 @@ import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
-import { enqueueBroadcast, retryDelay } from "../src/broadcast";
+import { enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
 
 const testEnv = {
@@ -254,6 +254,12 @@ describe("broadcast queue", () => {
 		expect(sent).toEqual([{ sourceChatId: "-100123", sourceMessageId: 9 }]);
 		expect(retryDelay(1)).toBe(2);
 		expect(retryDelay(8)).toBe(60);
+	});
+
+	it("records delivery outcomes for metrics", async () => {
+		await recordDeliveryEvent(env.DB, "delivered");
+		await recordDeliveryEvent(env.DB, "failed", "telegram_error");
+		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events ORDER BY id").all()).toMatchObject({ results: [{ status: "delivered", detail: null }, { status: "failed", detail: "telegram_error" }] });
 	});
 });
 
