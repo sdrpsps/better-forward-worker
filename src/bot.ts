@@ -4,7 +4,7 @@ import type { UserFromGetMe } from "grammy/types";
 import { createDb } from "./db";
 import { claimUpdate, completeUpdate, failUpdate } from "./updates";
 import type { WorkerEnv } from "./app";
-import { editEditedMessage, forwardMessage, handleUserCommand, syncReaction } from "./forwarding";
+import { editEditedMessage, forwardMessage, handleAdminCommand, handleUserCommand, syncReaction } from "./forwarding";
 import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-flow";
 import { observeInviteLink } from "./chat-id";
 import { handleIncomingPolicy } from "./policy";
@@ -47,6 +47,7 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 	bot.on("message", async (ctx, next) => {
 		if (await handleAdminInput(ctx as never)) return;
 		if (await handleIncomingPolicy(ctx as never)) return;
+		if (await handleAdminCommand(ctx as never)) return;
 		if (await handleUserCommand(ctx)) return;
 		await forwardMessage(ctx);
 		await next();

@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import type { Message } from "grammy/types";
 import { createDb } from "./db";
-import { messages, topics } from "./db/schema";
+import { blockedUsers, messages, topics, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
 import { readForwardGroupId } from "./env";
+import { isGroupAdmin } from "./admin-flow";
 
 type MessageContext = BotContext & { message: Message };
 
@@ -105,6 +106,43 @@ export async function handleUserCommand(ctx: MessageContext) {
 		return true;
 	}
 	if ((command === "/terminate" || command === "/refresh") && topic && groupId) {
+		if (command === "/terminate") await ctx.api.closeForumTopic(groupId, Number(topic.threadId));
+		else await ctx.api.reopenForumTopic(groupId, Number(topic.threadId));
+		return true;
+	}
+	return false;
+}
+
+export async function handleAdminCommand(ctx: MessageContext) {
+	const text = ctx.message.text;
+	const groupId = readForwardGroupId(ctx.env);
+	if (!text?.startsWith("/") || !groupId || ctx.message.chat.id.toString() !== groupId || ctx.message.message_thread_id == null || !ctx.from) return false;
+	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
+	const [command, ...rest] = text.trim().split(/\s+/);
+	const topic = await findTopic(ctx.env.DB, eq(topics.threadId, String(ctx.message.message_thread_id)));
+	if (!topic) return false;
+	if (command === "/ban") {
+		await createDb(ctx.env.DB).insert(blockedUsers).values({ userId: topic.userId, username: null, firstName: null, lastName: null, blockedAt: Date.now() }).onConflictDoNothing();
+		await ctx.api.closeForumTopic(groupId, Number(topic.threadId));
+		await ctx.reply("User blocked.");
+		return true;
+	}
+	if (command === "/verify") {
+		await createDb(ctx.env.DB).insert(verifiedUsers).values({ userId: topic.userId, verifiedAt: Date.now() }).onConflictDoUpdate({ target: verifiedUsers.userId, set: { verifiedAt: Date.now() } });
+		await ctx.reply("User verified.");
+		return true;
+	}
+	if (command === "/note") {
+		await createDb(ctx.env.DB).update(topics).set({ note: rest.join(" ") || null, updatedAt: Date.now() }).where(eq(topics.id, topic.id));
+		await ctx.reply("Note saved.");
+		return true;
+	}
+	if (command === "/delete") {
+		await ctx.api.deleteForumTopic(groupId, Number(topic.threadId));
+		await createDb(ctx.env.DB).delete(topics).where(eq(topics.id, topic.id));
+		return true;
+	}
+	if (command === "/terminate" || command === "/refresh") {
 		if (command === "/terminate") await ctx.api.closeForumTopic(groupId, Number(topic.threadId));
 		else await ctx.api.reopenForumTopic(groupId, Number(topic.threadId));
 		return true;

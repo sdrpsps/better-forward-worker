@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq, gte } from "drizzle-orm";
 import { createDb } from "./db";
 import { chatIdResolutionAudits, observedInviteLinks } from "./db/schema";
 
@@ -39,6 +39,15 @@ export async function resolveInviteLink(binding: D1Database, value: string, requ
 	if (!normalized) {
 		await db.insert(chatIdResolutionAudits).values({ hash, result: "invalid", requestId, createdAt: Date.now() });
 		return { status: 400 as const, error: "invalid_invite_link" };
+	}
+	const cutoff = Date.now() - 60_000;
+	const recent = await db
+		.select({ id: chatIdResolutionAudits.id })
+		.from(chatIdResolutionAudits)
+		.where(and(eq(chatIdResolutionAudits.hash, hash), gte(chatIdResolutionAudits.createdAt, cutoff)))
+		.all();
+	if (recent.length >= 10) {
+		return { status: 429 as const, error: "resolution_rate_limited" };
 	}
 	const observed = await db.select().from(observedInviteLinks).where(eq(observedInviteLinks.hash, hash)).get();
 	if (!observed) {

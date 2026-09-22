@@ -7,7 +7,7 @@ import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
-import { forwardMessage } from "../src/forwarding";
+import { forwardMessage, handleAdminCommand } from "../src/forwarding";
 import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import { enqueueBroadcast, retryDelay } from "../src/broadcast";
@@ -160,6 +160,35 @@ describe("observed invite resolution", () => {
 		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-2")).resolves.toEqual({ status: 200, chatId: "-100555" });
 		await expect(resolveInviteLink(env.DB, "http://t.me/+known-token", "req-3")).resolves.toMatchObject({ status: 400, error: "invalid_invite_link" });
 		expect(await env.DB.prepare("SELECT hash FROM observed_invite_links").first()).toEqual({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) });
+	});
+
+	it("rate limits repeated resolution attempts", async () => {
+		await observeInviteLink(env.DB, "https://t.me/+rate-token", "-100555");
+		for (let index = 0; index < 10; index += 1) await resolveInviteLink(env.DB, "https://t.me/+rate-token", `rate-${index}`);
+		expect(await resolveInviteLink(env.DB, "https://t.me/+rate-token", "rate-10")).toEqual({ status: 429, error: "resolution_rate_limited" });
+	});
+});
+
+describe("admin topic commands", () => {
+	it("applies verified admin commands to the current topic", async () => {
+		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
+		const calls: unknown[][] = [];
+		const api = {
+			getChatMember: async (...args: unknown[]) => { calls.push(["getChatMember", ...args]); return { status: "administrator" }; },
+			closeForumTopic: async (...args: unknown[]) => { calls.push(["closeForumTopic", ...args]); },
+		};
+		const replied: string[] = [];
+		const handled = await handleAdminCommand({
+			env: forwardEnv,
+			api,
+			from: { id: 7 },
+			message: { message_id: 30, date: 0, chat: { id: -100123, type: "supergroup" }, message_thread_id: 99, text: "/ban" },
+			reply: async (text: string) => { replied.push(text); },
+		} as never);
+		expect(handled).toBe(true);
+		expect(await env.DB.prepare("SELECT user_id FROM blocked_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
+		expect(calls).toContainEqual(["closeForumTopic", "-100123", 99]);
+		expect(replied).toEqual(["User blocked."]);
 	});
 });
 
