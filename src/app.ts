@@ -13,6 +13,8 @@ export type WorkerEnv = {
 	BROADCAST_QUEUE?: Queue<import("./broadcast").BroadcastJob>;
 	INTERNAL_API_SECRET?: string;
 	TELEGRAM_WEBHOOK_SECRET: string;
+	TGUARD_API_URL?: string;
+	TGUARD_API_KEY?: string;
 };
 
 export function createApp() {

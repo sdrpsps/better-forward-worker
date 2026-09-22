@@ -3,3 +3,5 @@ BOT_TOKEN=replace-with-a-test-bot-token
 TELEGRAM_WEBHOOK_SECRET=replace-with-a-random-webhook-secret
 FORWARD_GROUP_ID=replace-with-the-forwarding-supergroup-id
 INTERNAL_API_SECRET=replace-with-a-separate-random-internal-secret
+TGUARD_API_URL=https://tguard.example.com
+TGUARD_API_KEY=replace-with-tguard-api-key

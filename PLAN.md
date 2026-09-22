@@ -98,7 +98,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
 - [x] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
 
-**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本和 InlineKeyboard 按钮，callback 只接受发起用户且答案仍由 D1 challenge 校验；消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。TGuard 仍需真实 API/Mini App 契约和 secret，保留为部署前明确待办，不伪造外部验证结果。`pnpm typecheck`、`pnpm test -- --run`（18 tests）和 `git diff --check` 通过。
+**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`0006_tguard_captcha.sql` 为外部 TGuard token/URL 增加持久化字段。`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本、InlineKeyboard 按钮和真实 TGuard external API（`/api/verification/create`、`/api/verification-status/{token}`）；TGuard API key 只从 Worker secret 读取，D1 只保存短期 token/URL，callback/外部状态均校验用户和过期时间。消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。`pnpm typecheck`、`pnpm test -- --run`（22 tests）、`pnpm test:migration` 和 `git diff --check` 通过。
 
 验收：设置跨请求保持；过期状态不依赖 Cron 也不会被接受；正则输入有安全边界。
 
@@ -117,7 +117,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 校验 topics、消息映射、settings、rules、verified/blocked 用户、权限记录计数；在测试 bot 回归。
 - [ ] 配置生产 secret、D1、Queue、Webhook，停止旧 polling、处理 pending updates、切换并观察重复/丢失；观察窗口后删除 Python/Docker/旧部署文档。
 
-**Phase 6 实现与验收（2026-09-22）：** `scripts/migrate-sqlite.mjs` 仅使用 Node 24 `node:sqlite` 在部署外读取旧库，生成 D1 可执行的 `up.sql`、`rollback.sql` 和 JSON 计数报告；`--dry-run` 不写 SQL/备份，`--backup` 复制源库，`--rollback report.json` 重建回滚 SQL，topic/message/settings/rules/verified/blocked/permission 均按稳定 key 幂等，重复迁移不会复制 auto response，settings 不覆盖目标已有值且 rollback 只删除本次写入值。内部 webhook setup 默认 `drop_pending_updates=false`，只有运维显式传入 true 才丢弃 pending updates。`pnpm test:migration` 使用 Node 24 fixture 创建旧 schema、执行全部迁移 SQL、重复执行 up、校验各表计数并执行 rollback；另有 `pnpm typecheck`、`pnpm test -- --run`（19 tests）通过。生产 D1/Queue 创建、`wrangler secret put`、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口需要实际 Cloudflare/Telegram 凭据，因此保留为部署前 checklist，不在本地提交中宣称完成。
+**Phase 6 实现与验收（2026-09-22）：** `scripts/migrate-sqlite.mjs` 仅使用 Node 24 `node:sqlite` 在部署外读取旧库，生成 D1 可执行的 `up.sql`、`rollback.sql` 和 JSON 计数报告；`--dry-run` 不写 SQL/备份，`--backup` 复制源库，`--rollback report.json` 重建回滚 SQL，topic/message/settings/rules/verified/blocked/permission 均按稳定 key 幂等，重复迁移不会复制 auto response，settings 不覆盖目标已有值且 rollback 只删除本次写入值。内部 webhook setup 默认 `drop_pending_updates=false`，只有运维显式传入 true 才丢弃 pending updates。`pnpm test:migration` 使用 Node 24 fixture 创建旧 schema、执行全部迁移 SQL（含 0006）、重复执行 up、校验各表计数并执行 rollback；另有 `pnpm typecheck`、`pnpm test -- --run`（22 tests）通过。生产 D1/Queue 创建、`wrangler secret put`、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口需要实际 Cloudflare/Telegram 凭据，因此保留为部署前 checklist，不在本地提交中宣称完成。
 
 验收：迁移报告数量一致；生产 smoke test 通过；回滚经演练可执行。
 

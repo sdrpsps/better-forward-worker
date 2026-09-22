@@ -90,10 +90,13 @@ export const userPermissionOverrides = sqliteTable(
 
 export const captchaChallenges = sqliteTable("captcha_challenges", {
 	userId: text("user_id").primaryKey(),
+	mode: text("mode", { enum: ["math", "button", "tguard"] }).notNull().default("math"),
 	leftOperand: integer("left_operand").notNull(),
 	rightOperand: integer("right_operand").notNull(),
 	expiresAt: integer("expires_at").notNull(),
 	attempts: integer("attempts").notNull(),
+	externalToken: text("external_token"),
+	externalUrl: text("external_url"),
 });
 
 export const spamKeywords = sqliteTable("spam_keywords", {

@@ -5,9 +5,9 @@ import { autoResponses, blockedUsers, captchaChallenges, settings, spamKeywords,
 import type { BotContext } from "./bot";
 
 export const translations = {
-	en: { blocked: "You cannot send messages.", captcha: "What is {left} + {right}?", saved: "Saved." },
-	zh: { blocked: "你暂时不能发送消息。", captcha: "请计算 {left} + {right}。", saved: "已保存。" },
-	ja: { blocked: "現在メッセージを送信できません。", captcha: "{left} + {right} は？", saved: "保存しました。" },
+	en: { blocked: "You cannot send messages.", captcha: "What is {left} + {right}?", tguard: "Open verification: {url}", saved: "Saved." },
+	zh: { blocked: "你暂时不能发送消息。", captcha: "请计算 {left} + {right}。", tguard: "请打开验证链接：{url}", saved: "已保存。" },
+	ja: { blocked: "現在メッセージを送信できません。", captcha: "{left} + {right} は？", tguard: "認証を開いてください: {url}", saved: "保存しました。" },
 } as const;
 
 export function t(locale: keyof typeof translations, key: keyof typeof translations.en, values: Record<string, string | number> = {}) {
@@ -98,6 +98,38 @@ export async function handleCaptchaCallback(ctx: BotContext & { callbackQuery: {
 	return true;
 }
 
+async function createTGuardChallenge(ctx: BotContext, userId: string) {
+	const baseUrl = ctx.env.TGUARD_API_URL;
+	const apiKey = ctx.env.TGUARD_API_KEY;
+	if (!baseUrl || !apiKey) return null;
+	try {
+		const endpoint = new URL("/api/verification/create", baseUrl);
+		const response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json", "x-api-key": apiKey }, body: JSON.stringify({ user_id: userId }) });
+		if (!response.ok) return null;
+		const result = await response.json() as { token?: unknown; verification_url?: unknown; expires_at?: unknown };
+		if (typeof result.token !== "string" || typeof result.verification_url !== "string") return null;
+		const parsedExpiry = typeof result.expires_at === "string" ? Date.parse(result.expires_at) : NaN;
+		return { token: result.token, url: result.verification_url, expiresAt: Number.isFinite(parsedExpiry) && parsedExpiry > Date.now() ? parsedExpiry : Date.now() + 10 * 60_000 };
+	} catch {
+		return null;
+	}
+}
+
+async function isTGuardVerified(ctx: BotContext, challenge: { externalToken: string; expiresAt: number }) {
+	const baseUrl = ctx.env.TGUARD_API_URL;
+	const apiKey = ctx.env.TGUARD_API_KEY;
+	if (!baseUrl || !apiKey || challenge.expiresAt <= Date.now()) return false;
+	try {
+		const endpoint = new URL(`/api/verification-status/${encodeURIComponent(challenge.externalToken)}`, baseUrl);
+		const response = await fetch(endpoint, { headers: { "x-api-key": apiKey } });
+		if (!response.ok) return false;
+		const result = await response.json() as { completed?: unknown; expired?: unknown };
+		return result.completed === true && result.expired !== true;
+	} catch {
+		return false;
+	}
+}
+
 async function sendAutoResponse(ctx: BotContext, response: string) {
 	const [kind, fileId] = response.split(":", 2);
 	if (!fileId) return ctx.reply(response);
@@ -129,11 +161,31 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 		}
 	}
 	const captchaMode = (await createDb(ctx.env.DB).select().from(settings).where(eq(settings.key, "captcha")).get())?.value;
-	if ((captchaMode === "enable" || captchaMode === "math" || captchaMode === "button") && !(await isVerified(ctx.env.DB, userId))) {
+	if ((captchaMode === "enable" || captchaMode === "math" || captchaMode === "button" || captchaMode === "tguard") && !(await isVerified(ctx.env.DB, userId))) {
 		let challenge = await createDb(ctx.env.DB).select().from(captchaChallenges).where(eq(captchaChallenges.userId, userId)).get();
+		if (captchaMode === "tguard") {
+			if (challenge?.mode === "tguard" && challenge.externalToken && challenge.externalUrl) {
+				if (await isTGuardVerified(ctx, { externalToken: challenge.externalToken, expiresAt: challenge.expiresAt })) {
+					const db = createDb(ctx.env.DB);
+					await db.delete(captchaChallenges).where(eq(captchaChallenges.userId, userId));
+					await db.insert(verifiedUsers).values({ userId, verifiedAt: Date.now() }).onConflictDoUpdate({ target: verifiedUsers.userId, set: { verifiedAt: Date.now() } });
+					return false;
+				}
+				await ctx.reply(t("en", "tguard", { url: challenge.externalUrl }));
+				return true;
+			}
+			const created = await createTGuardChallenge(ctx, userId);
+			if (!created) {
+				await ctx.reply(t("en", "blocked"));
+				return true;
+			}
+			await createDb(ctx.env.DB).insert(captchaChallenges).values({ userId, mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, attempts: 0, externalToken: created.token, externalUrl: created.url }).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, attempts: 0, externalToken: created.token, externalUrl: created.url } });
+			await ctx.reply(t("en", "tguard", { url: created.url }));
+			return true;
+		}
 		if (captchaMode !== "button" && challenge && ctx.message.text && /^\d+$/.test(ctx.message.text)) {
 			if (await answerCaptcha(ctx.env.DB, userId, Number(ctx.message.text))) await ctx.reply(t("en", "saved"));
-			else await ctx.reply(t("en", "captcha", challenge));
+			else await ctx.reply(t("en", "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }));
 			return true;
 		}
 		if (!challenge || challenge.expiresAt <= Date.now()) {
@@ -141,10 +193,10 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 			crypto.getRandomValues(random);
 			const left = 1 + (random[0] % 9);
 			const right = 1 + (random[1] % 9);
-			challenge = { userId, leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0 };
-			await createDb(ctx.env.DB).insert(captchaChallenges).values(challenge).onConflictDoUpdate({ target: captchaChallenges.userId, set: challenge });
+			challenge = { userId, mode: captchaMode === "button" ? "button" : "math", leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0, externalToken: null, externalUrl: null };
+			await createDb(ctx.env.DB).insert(captchaChallenges).values(challenge).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: challenge.mode, leftOperand: left, rightOperand: right, expiresAt: challenge.expiresAt, attempts: 0, externalToken: null, externalUrl: null } });
 		}
-		await ctx.reply(t("en", "captcha", challenge), captchaMode === "button" ? { reply_markup: captchaKeyboard(userId, challenge.leftOperand + challenge.rightOperand) } : undefined);
+		await ctx.reply(t("en", "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }), captchaMode === "button" ? { reply_markup: captchaKeyboard(userId, challenge.leftOperand + challenge.rightOperand) } : undefined);
 		return true;
 	}
 	if (!ctx.message.text) return false;

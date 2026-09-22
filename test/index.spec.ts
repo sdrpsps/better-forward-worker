@@ -5,6 +5,7 @@ import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
 import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
+import phase6MigrationSql from "../migrations/0006_tguard_captcha.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { handleAdminCallback, handleAdminInput } from "../src/admin-flow";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
@@ -38,6 +39,7 @@ const migrations = [
 	{ name: "0003_phase_3.sql", queries: phase3MigrationSql.split(";").filter(Boolean) },
 	{ name: "0004_phase_4.sql", queries: phase4MigrationSql.split(";").filter(Boolean) },
 	{ name: "0005_phase_5.sql", queries: phase5MigrationSql.split(";").filter(Boolean) },
+	{ name: "0006_tguard_captcha.sql", queries: phase6MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -269,6 +271,20 @@ describe("policy helpers", () => {
 		expect(await canForward(env.DB, "42")).toBe(false);
 		await env.DB.prepare("INSERT INTO user_permission_overrides (user_id, permission_key, override, updated_at) VALUES (?, ?, ?, ?)").bind("42", "forward", "allow", 2).run();
 		expect(await canForward(env.DB, "42")).toBe(true);
+	});
+
+	it("creates and polls a TGuard verification session", async () => {
+		await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("captcha", "tguard", 1).run();
+		const fetch = vi.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(new Response(JSON.stringify({ token: "tg-token", verification_url: "https://tguard.example/verify?token=tg-token", expires_at: new Date(Date.now() + 60_000).toISOString() }), { headers: { "content-type": "application/json" } }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ completed: true, expired: false }), { headers: { "content-type": "application/json" } }));
+		const replies: string[] = [];
+		const tguardEnv = { ...testEnv, TGUARD_API_URL: "https://tguard.example", TGUARD_API_KEY: "test-key" };
+		expect(await handleIncomingPolicy({ env: tguardEnv, message: { chat: { type: "private" }, from: { id: 42 }, text: "hello" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
+		expect(replies).toEqual(["Open verification: https://tguard.example/verify?token=tg-token"]);
+		expect(await handleIncomingPolicy({ env: tguardEnv, message: { chat: { type: "private" }, from: { id: 42 }, text: "hello again" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(false);
+		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
+		fetch.mockRestore();
 	});
 });
 
