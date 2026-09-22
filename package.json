@@ -8,6 +8,7 @@
 		"start": "wrangler dev",
 		"test": "vitest",
 		"cf-typegen": "wrangler types",
+		"migrate:sqlite": "node scripts/migrate-sqlite.mjs",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
