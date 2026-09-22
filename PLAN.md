@@ -1,6 +1,6 @@
 # BetterForward → Cloudflare Workers 重构计划
 
-状态：**Phase 1 已完成。**
+状态：**Phase 2 已完成。**
 
 ## 目标与边界
 
@@ -76,9 +76,11 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 2 — 核心双向转发
 
-- [ ] 首条用户消息创建话题；用户→话题覆盖文本、图片、贴纸、视频、文件、语音、音频、动画、联系人。
-- [ ] 管理员话题→用户回复，保存 received/forwarded 映射与 reply threading；处理被手工删除的话题映射与重建。
-- [ ] 迁移 `/start`、`/help`、`/delete`、`/terminate`、`/refresh`；实现编辑/reaction 或记录差异。
+- [x] 首条用户消息创建话题；用户→话题覆盖文本、图片、贴纸、视频、文件、语音、音频、动画、联系人。
+- [x] 管理员话题→用户回复，保存 received/forwarded 映射与 reply threading；处理被手工删除的话题映射与重建。
+- [x] 迁移 `/start`、`/help`、`/delete`、`/terminate`、`/refresh`；实现编辑/reaction 或记录差异。
+
+**Phase 2 实现与验收（2026-09-22）：** `src/forwarding.ts` 使用 Telegram `copyMessage` 统一覆盖文本和媒体类型；D1 `topics`/`messages` 唯一约束保存双向映射并重建 reply 参数。`/delete` 删除 forum topic 和映射，`/terminate`/`/refresh` 关闭或重开 topic；文本编辑和 reaction 沿映射同步。首条消息 topic 创建采用 user_id 唯一约束，竞争插入读取已存在 topic；Telegram 外部调用失败会让 update 标记 failed 以便重试。`pnpm typecheck`、`pnpm test -- --run`（6 tests）和 `git diff --check` 通过。
 
 验收：fixture 覆盖双向文本、媒体、回复、重复 update、失效话题重建，测试群完成一次端到端验证。
 

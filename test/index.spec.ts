@@ -4,6 +4,7 @@ import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
 import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
+import { forwardMessage } from "../src/forwarding";
 import worker from "../src/index";
 
 const testEnv = {
@@ -20,6 +21,7 @@ const testEnv = {
 	BOT_TOKEN: "123456:test-token",
 	TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
 };
+const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
 
 const migrations = [
 	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
@@ -99,6 +101,38 @@ describe("update claims", () => {
 		expect(await claimUpdate(env.DB, 7001, "req-3", 1_003)).toBe(true);
 		await completeUpdate(env.DB, 7001, 1_004);
 		expect(await claimUpdate(env.DB, 7001, "req-4", 1_005)).toBe(false);
+	});
+});
+
+describe("bidirectional forwarding", () => {
+	it("creates one topic, copies both directions, and preserves replies", async () => {
+		const calls: unknown[][] = [];
+		let nextMessageId = 20;
+		const api = {
+			createForumTopic: async (...args: unknown[]) => {
+				calls.push(["createForumTopic", ...args]);
+				return { message_thread_id: 99, name: "Test", icon_color: 0 };
+			},
+			copyMessage: async (...args: unknown[]) => {
+				calls.push(["copyMessage", ...args]);
+				return nextMessageId++;
+			},
+		};
+		await forwardMessage({
+			env: forwardEnv,
+			api,
+			message: { message_id: 10, date: 0, chat: { id: 42, type: "private" }, from: { id: 42, is_bot: false, first_name: "Test" }, text: "hello" },
+		} as never);
+		await forwardMessage({
+			env: forwardEnv,
+			api,
+			message: { message_id: 30, date: 0, chat: { id: -100123, type: "supergroup" }, message_thread_id: 99, from: { id: 7, is_bot: false, first_name: "Admin" }, text: "reply", reply_to_message: { message_id: 20 } },
+		} as never);
+
+		expect(await env.DB.prepare("SELECT user_id, thread_id FROM topics").all()).toMatchObject({ results: [{ user_id: "42", thread_id: "99" }] });
+		expect(await env.DB.prepare("SELECT received_id, forwarded_id, in_group FROM messages ORDER BY id").all()).toMatchObject({ results: [{ received_id: "10", forwarded_id: "20", in_group: 0 }, { received_id: "30", forwarded_id: "21", in_group: 1 }] });
+		expect(calls[1]).toEqual(["copyMessage", "-100123", "42", 10, { message_thread_id: 99 }]);
+		expect(calls[2]).toEqual(["copyMessage", "42", "-100123", 30, { reply_parameters: { message_id: 10 } }]);
 	});
 });
 

@@ -4,6 +4,7 @@ import type { UserFromGetMe } from "grammy/types";
 import { createDb } from "./db";
 import { claimUpdate, completeUpdate, failUpdate } from "./updates";
 import type { WorkerEnv } from "./app";
+import { editEditedMessage, forwardMessage, handleUserCommand, syncReaction } from "./forwarding";
 
 export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query"] as const;
 export const MAX_CONNECTIONS = 40;
@@ -40,7 +41,13 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 			throw error;
 		}
 	});
-	bot.on("message:text", () => undefined);
+	bot.on("message", async (ctx, next) => {
+		if (await handleUserCommand(ctx)) return;
+		await forwardMessage(ctx);
+		await next();
+	});
+	bot.on("edited_message", editEditedMessage);
+	bot.on("message_reaction", syncReaction);
 	return bot;
 }
 

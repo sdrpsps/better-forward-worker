@@ -38,3 +38,8 @@ export function readWebhookConfig(env: WorkerEnv) {
 export function readInternalApiSecret(env: WorkerEnv) {
 	return internalApiSecretSchema.safeParse(env.INTERNAL_API_SECRET).data ?? null;
 }
+
+export function readForwardGroupId(env: WorkerEnv) {
+	const value = z.string().min(1).safeParse(env.FORWARD_GROUP_ID);
+	return value.success ? value.data : null;
+}
