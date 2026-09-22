@@ -51,8 +51,8 @@ const settings = rows("settings");
 report.counts.settings = settings.length;
 for (const row of settings) {
 	if (row.key == null) continue;
-	up.push(`INSERT INTO settings (key, value, updated_at) VALUES (${quote(row.key)}, ${quote(row.value)}, ${now}) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at;`);
-	rollback.push(`DELETE FROM settings WHERE key = ${quote(row.key)};`);
+	up.push(`INSERT OR IGNORE INTO settings (key, value, updated_at) VALUES (${quote(row.key)}, ${quote(row.value)}, ${now});`);
+	rollback.push(`DELETE FROM settings WHERE key = ${quote(row.key)} AND value = ${quote(row.value)} AND updated_at = ${now};`);
 }
 
 const copyRows = (table, columns, transform = (row) => row) => {

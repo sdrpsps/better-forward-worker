@@ -9,6 +9,7 @@
 		"test": "vitest",
 		"cf-typegen": "wrangler types",
 		"migrate:sqlite": "node scripts/migrate-sqlite.mjs",
+		"test:migration": "node scripts/test-migrate-sqlite.mjs",
 		"typecheck": "tsc --noEmit"
 	},
 	"devDependencies": {
