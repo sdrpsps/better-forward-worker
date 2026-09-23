@@ -8,6 +8,8 @@
 		"start": "wrangler dev",
 		"test": "vitest",
 		"cf-typegen": "wrangler types",
+		"bot:info": "node scripts/get-bot-info.mjs",
+		"webhook:set": "node scripts/set-webhook.mjs",
 		"migrate:sqlite": "node scripts/migrate-sqlite.mjs",
 		"test:migration": "node scripts/test-migrate-sqlite.mjs",
 		"typecheck": "tsc --noEmit"

@@ -1,6 +1,7 @@
 import { Bot, webhookCallback } from "grammy";
 import type { Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
+import webhookConfig from "./webhook-config.json";
 import { createDb } from "./db";
 import { claimUpdate, completeUpdate, failUpdate } from "./updates";
 import type { WorkerEnv } from "./app";
@@ -9,8 +10,8 @@ import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-fl
 import { observeInviteLink } from "./chat-id";
 import { handleCaptchaCallback, handleIncomingPolicy } from "./policy";
 
-export const ALLOWED_UPDATES = ["message", "edited_message", "message_reaction", "callback_query", "chat_join_request"] as const;
-export const MAX_CONNECTIONS = 40;
+export const ALLOWED_UPDATES = webhookConfig.allowedUpdates as Array<"message" | "edited_message" | "message_reaction" | "callback_query" | "chat_join_request">;
+export const MAX_CONNECTIONS = webhookConfig.maxConnections;
 
 type Logger = Pick<Console, "debug" | "info" | "warn" | "error">;
 export type BotContext = Context & {
