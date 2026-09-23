@@ -32,8 +32,3 @@ export function readWebhookConfig(env: WorkerEnv) {
 		return null;
 	}
 }
-
-export function readForwardGroupId(env: WorkerEnv) {
-	const value = z.string().min(1).safeParse(env.FORWARD_GROUP_ID);
-	return value.success ? value.data : null;
-}

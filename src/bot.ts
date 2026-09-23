@@ -40,7 +40,7 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 		await forwardMessage(ctx);
 		await next();
 	});
-	bot.command("admin", showAdminMenu);
+	bot.command(["admin", "start", "help"], showAdminMenu);
 	bot.callbackQuery(/^admin:/, handleAdminCallback);
 	bot.callbackQuery(/^captcha:/, handleCaptchaCallback);
 	bot.on("edited_message", editEditedMessage);

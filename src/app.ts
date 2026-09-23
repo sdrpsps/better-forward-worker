@@ -6,7 +6,6 @@ export type WorkerEnv = {
 	BOT_INFO_JSON: string;
 	BOT_TOKEN: string;
 	DB: D1Database;
-	FORWARD_GROUP_ID?: string;
 	TELEGRAM_WEBHOOK_SECRET: string;
 	TGUARD_API_URL?: string;
 	TGUARD_API_KEY?: string;

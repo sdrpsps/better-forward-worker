@@ -1,30 +1,58 @@
-import { InlineKeyboard, Keyboard } from "grammy";
+import { InlineKeyboard } from "grammy";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "./admin-sessions";
 import { createDb } from "./db";
 import { settings } from "./db/schema";
 import type { BotContext } from "./bot";
-import { readForwardGroupId } from "./env";
+import { initializeForwardGroup, readForwardGroupId } from "./forward-group";
 
 const SCOPE = "admin-menu";
 const SESSION_TTL_MS = 10 * 60_000;
 
-export async function isGroupAdmin(ctx: BotContext, userId: number, chatId?: string) {
-	const groupId = chatId ?? readForwardGroupId(ctx.env);
-	if (!groupId) return false;
+const isAdmin = (member: { status: string }) => member.status === "administrator" || member.status === "creator";
+const canManageTopics = (member: { status: string; can_manage_topics?: boolean }) => isAdmin(member) && member.can_manage_topics !== false;
+
+export async function isGroupAdmin(ctx: BotContext, userId: number, groupId: string) {
 	const member = await ctx.api.getChatMember(groupId, userId);
-	return member.status === "administrator" || member.status === "creator";
+	return isAdmin(member);
+}
+
+async function initializeFromCurrentGroup(ctx: BotContext) {
+	if (!ctx.from || !ctx.chat || ctx.chat.type !== "supergroup" || ctx.message?.message_thread_id != null) {
+		await ctx.reply("Run /admin in the main chat of the forwarding forum group.");
+		return null;
+	}
+	const groupId = String(ctx.chat.id);
+	const chat = await ctx.api.getChat(groupId);
+	const isForum = "is_forum" in chat && chat.is_forum === true;
+	if (!isForum) {
+		await ctx.reply("This group must have Topics enabled.");
+		return null;
+	}
+	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return null;
+	if (!canManageTopics(await ctx.api.getChatMember(groupId, ctx.me.id))) {
+		await ctx.reply("Make the bot an administrator with Manage Topics permission, then run /admin again.");
+		return null;
+	}
+	if (await initializeForwardGroup(ctx.env.DB, groupId)) return groupId;
+	await ctx.reply("A forwarding group is already configured.");
+	return null;
 }
 
 export async function showAdminMenu(ctx: BotContext) {
-	if (!ctx.from || !(await isGroupAdmin(ctx, ctx.from.id, ctx.chat?.id.toString()))) return;
+	let groupId = await readForwardGroupId(ctx.env.DB);
+	const initialized = !groupId;
+	if (!groupId) groupId = await initializeFromCurrentGroup(ctx);
+	if (!groupId || !ctx.from || ctx.chat?.id.toString() !== groupId || ctx.message?.message_thread_id != null || !(await isGroupAdmin(ctx, ctx.from.id, groupId))) return;
+	if (initialized) await ctx.reply("Forwarding group initialized.");
 	await ctx.reply("Admin settings", {
-		reply_markup: new InlineKeyboard().text("Welcome message", "admin:set:default_message").text("Captcha", "admin:set:captcha").row().text("Choose group", "admin:request-chat").row().text("Cancel", "admin:cancel"),
+		reply_markup: new InlineKeyboard().text("Welcome message", "admin:set:default_message").text("Captcha", "admin:set:captcha").row().text("Cancel", "admin:cancel"),
 	});
 }
 
 export async function handleAdminCallback(ctx: BotContext & { callbackQuery: { data?: string; message?: { chat: { id: number | string } } } }) {
 	const action = ctx.callbackQuery.data;
-	if (!ctx.from || !action || !(await isGroupAdmin(ctx, ctx.from.id, ctx.callbackQuery.message?.chat.id.toString()))) return;
+	const groupId = await readForwardGroupId(ctx.env.DB);
+	if (!ctx.from || !action || !groupId || ctx.callbackQuery.message?.chat.id.toString() !== groupId || !(await isGroupAdmin(ctx, ctx.from.id, groupId))) return;
 	await ctx.answerCallbackQuery();
 	if (action === "admin:cancel") {
 		await cancelAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
@@ -38,14 +66,11 @@ export async function handleAdminCallback(ctx: BotContext & { callbackQuery: { d
 		await ctx.editMessageText("Send the value, or /cancel.");
 		return;
 	}
-	if (action === "admin:request-chat") {
-		await ctx.editMessageText("Use the button below to share a group.");
-		await ctx.reply("Choose the forwarding group", { reply_markup: new Keyboard().requestChat("Share group", 1, { chat_is_channel: false, chat_is_forum: true }).resized() });
-	}
 }
 
-export async function handleAdminInput(ctx: BotContext & { message: { text?: string; chat: { type: string }; chat_shared?: { chat_id: number | string } } }) {
-	if (!ctx.from || ctx.message.chat.type !== "private") return false;
+export async function handleAdminInput(ctx: BotContext & { message: { text?: string; chat: { id: number | string; type: string }; message_thread_id?: number } }) {
+	const groupId = await readForwardGroupId(ctx.env.DB);
+	if (!ctx.from || !groupId || ctx.message.chat.id.toString() !== groupId || ctx.message.message_thread_id != null || !(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
 	if (ctx.message.text === "/cancel") {
 		await cancelAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
 		await ctx.reply("Cancelled.");
@@ -53,14 +78,6 @@ export async function handleAdminInput(ctx: BotContext & { message: { text?: str
 	}
 	const session = await loadAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
 	if (!session) return false;
-	if (ctx.message.chat_shared) {
-		const groupId = String(ctx.message.chat_shared.chat_id);
-		await ctx.api.getChat(groupId);
-		await ctx.api.getChatMember(groupId, ctx.me.id);
-		await saveAdminSession(ctx.env.DB, { ...session, state: "chat-selected", payload: { chatId: groupId }, expiresAt: Date.now() + SESSION_TTL_MS });
-		await ctx.reply("Group verified and saved for this setup.");
-		return true;
-	}
 	if (session.state === "awaiting-value" && ctx.message.text) {
 		const key = typeof session.payload.key === "string" ? session.payload.key : null;
 		if (key) await createDb(ctx.env.DB).insert(settings).values({ key, value: ctx.message.text, updatedAt: Date.now() }).onConflictDoUpdate({ target: settings.key, set: { value: ctx.message.text, updatedAt: Date.now() } });

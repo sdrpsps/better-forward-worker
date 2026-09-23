@@ -30,7 +30,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 - `topics.user_id`、`topics.thread_id`、`settings.key` 和 `processed_updates.update_id` 各自唯一。
 - 消息映射按真实查询路径建立组合索引；Telegram ID 不通过 JS `number`。
-- 临时状态含 `expires_at`，读取时判定过期，Cron 仅清理；群组选择使用私聊 `request_chat`，再验证机器人权限。
+- 临时状态含 `expires_at`，读取时判定过期，Cron 仅清理；转发群首次绑定由目标 forum 群主聊天中的管理员命令完成并验证机器人权限。
 
 ## Phase 0 盘点记录
 
@@ -83,9 +83,10 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 ## Phase 3 — 管理流程与群组选择
 
 - [x] 迁移管理菜单/callback 和全部多步骤配置，支持取消、超时、并发管理员。
-- [x] 实现 `request_chat` 与群组权限校验。
+- [x] 以目标 forum 群主聊天的管理员命令完成首次绑定与权限校验。
+- [x] 修正首次转发群初始化：在目标 forum 群主聊天由管理员执行 `/start`、`/help` 或 `/admin`，验证群、操作者与 Bot 权限后原子写入 D1。
 
-**Phase 3 实现与验收（2026-09-22；2026-09-23 更新）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，设置菜单会把 `default_message`/`captcha` 写入 D1，Phase 4 的具体策略继续复用该状态机。`request_chat` 的 `chat_shared` 会先调用 `getChat/getChatMember` 验证机器人可见性。已删除邀请链接观察和解析 API。
+**Phase 3 实现与验收（2026-09-22；2026-09-23 更新）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，设置菜单会把 `default_message`/`captcha` 写入 D1，Phase 4 的具体策略继续复用该状态机。首次初始化不能信任私聊群组选择的任意发送者，也不能把配置只留在临时 session；改为在目标 forum 群主聊天验证管理员和 Bot 权限后原子持久化 `settings.forward_group_id`。管理员可用 `/start`、`/help` 或 `/admin` 打开流程，私聊 `/start` 保持欢迎文案。这与原版从转发群主聊天打开管理菜单的行为一致，且不解析邀请链接或 `t.me` 页面。`pnpm typecheck`、`pnpm test -- --run`（19 tests）、本地 D1 migration 和 Wrangler 本地 `/health` 200 / 无 secret webhook 401 均通过；测试覆盖 forum 初始化、Bot 缺少 Manage Topics 权限拒绝和初始化后的首条私聊转发。
 
 验收：群组选择验证不会泄露群组凭据。
 
@@ -112,7 +113,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 不保留 SQLite 数据转换工具：没有需要导入的既有数据库。
 - [ ] 配置生产 secret、D1、Webhook，停止旧 polling、处理 pending updates、切换并观察重复/丢失；观察窗口后删除 Python/Docker/旧部署文档。
 
-**Phase 6 实现与验收（2026-09-23 更新）：** D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；两者始终应用同一组 `migrations/*.sql`，仅目标不同。远端 D1 已应用至 `0007_remove_internal_api.sql`，清除了已删除内部 API 专用表。没有既有 SQLite 数据库，因此删除 SQLite→D1 导入、计数校验与回滚脚本，不保留无数据源的转换链路。`pnpm bot:info` 交互式读取 bot token，调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON。`pnpm webhook:set` 交互式读取 bot token、webhook secret 和 webhook URL，调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates；不会读取环境变量或写入 Cloudflare。运维必须单独以相同值执行 `wrangler secret put TELEGRAM_WEBHOOK_SECRET`，避免脚本隐式改变生产 Worker secret。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
+**Phase 6 实现与验收（2026-09-23 更新）：** D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；两者始终应用同一组 `migrations/*.sql`，仅目标不同。远端 D1 已应用至 `0007_remove_internal_api.sql`，清除了已删除内部 API 专用表。没有既有 SQLite 数据库，因此删除 SQLite→D1 导入、计数校验与回滚脚本，不保留无数据源的转换链路。`pnpm bot:info` 交互式读取 bot token，调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON。`pnpm webhook:set` 交互式读取 bot token、webhook secret 和 webhook URL，调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates；不会读取环境变量或写入 Cloudflare。生产转发群由 Phase 3 的群内 `/start`、`/help` 或 `/admin` 初始化写入 D1；部署期 `FORWARD_GROUP_ID` 不再是运行时配置来源。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
 
 验收：本地 D1 schema migration 可重复执行；生产 smoke test 通过。
 

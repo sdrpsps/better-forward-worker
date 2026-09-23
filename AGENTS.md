@@ -21,7 +21,7 @@
 - Webhook 必须验证 `X-Telegram-Bot-Api-Secret-Token`。
 - 不依赖 Worker 实例内存保存会话、验证码、去重状态或设置；处理每一个 update 时考虑 Telegram 重试与重复投递。
 - 创建话题、消息映射等关键写入须有数据库唯一约束或等价幂等保护。无界广播必须进入 Cloudflare Queue。
-- 群组选择仅使用 `request_chat` 的可靠路径；不抓取 `t.me` HTML。
+- 转发群首次绑定只接受目标 forum 群主聊天中经验证的管理员命令；不抓取 `t.me` HTML。
 
 ## 测试、文档与提交
 

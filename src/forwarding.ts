@@ -3,8 +3,8 @@ import type { Message } from "grammy/types";
 import { createDb } from "./db";
 import { blockedUsers, messages, settings, topics, userPermissionOverrides, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
-import { readForwardGroupId } from "./env";
 import { isGroupAdmin } from "./admin-flow";
+import { readForwardGroupId } from "./forward-group";
 
 type MessageContext = BotContext & { message: Message };
 type Topic = NonNullable<Awaited<ReturnType<typeof findTopic>>>;
@@ -104,7 +104,7 @@ async function forwardToGroup(ctx: MessageContext, groupId: string) {
 }
 
 export async function forwardMessage(ctx: MessageContext) {
-	const groupId = readForwardGroupId(ctx.env);
+	const groupId = await readForwardGroupId(ctx.env.DB);
 	if (!groupId) return;
 	if (ctx.message.chat.id.toString() === groupId) return forwardToUser(ctx, groupId);
 	if (ctx.message.chat.type === "private") return forwardToGroup(ctx, groupId);
@@ -115,12 +115,13 @@ export async function handleUserCommand(ctx: MessageContext) {
 	if (!text?.startsWith("/")) return false;
 	const command = text.split(/\s+/, 1)[0];
 	if (command === "/start" || command === "/help") {
+		if (ctx.message.chat.type !== "private") return false;
 		const configured = await createDb(ctx.env.DB).select({ value: settings.value }).from(settings).where(eq(settings.key, "default_message")).get();
 		await ctx.reply(configured?.value || "Tell me what you want to forward.");
 		return true;
 	}
 	if (ctx.message.chat.type !== "private") return false;
-	const groupId = readForwardGroupId(ctx.env);
+	const groupId = await readForwardGroupId(ctx.env.DB);
 	const topic = groupId ? await findTopic(ctx.env.DB, eq(topics.userId, String(ctx.message.chat.id))) : null;
 	if (command === "/delete" && topic && groupId) {
 		await ctx.api.deleteForumTopic(groupId, Number(topic.threadId));
@@ -138,7 +139,7 @@ export async function handleUserCommand(ctx: MessageContext) {
 
 export async function handleAdminCommand(ctx: MessageContext) {
 	const text = ctx.message.text;
-	const groupId = readForwardGroupId(ctx.env);
+	const groupId = await readForwardGroupId(ctx.env.DB);
 	if (!text?.startsWith("/") || !groupId || ctx.message.chat.id.toString() !== groupId || !ctx.from) return false;
 	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
 	const [command, ...rest] = text.trim().split(/\s+/);
@@ -195,7 +196,7 @@ export async function handleAdminCommand(ctx: MessageContext) {
 }
 
 async function editMessage(ctx: BotContext, message: Message) {
-	const groupId = readForwardGroupId(ctx.env);
+	const groupId = await readForwardGroupId(ctx.env.DB);
 	const text = message.text;
 	if (!groupId || !text) return;
 	if (message.chat.id.toString() === groupId && message.message_thread_id != null) {
@@ -215,7 +216,7 @@ export async function editEditedMessage(ctx: BotContext) {
 }
 
 export async function syncReaction(ctx: BotContext & { messageReaction: { chat: { id: number | string }; message_id: number; new_reaction: unknown[] } }) {
-	const groupId = readForwardGroupId(ctx.env);
+	const groupId = await readForwardGroupId(ctx.env.DB);
 	if (!groupId) return;
 	const fromGroup = ctx.messageReaction.chat.id.toString() === groupId;
 	const mapping = await findReceivedMapping(ctx.env.DB, String(ctx.messageReaction.message_id), fromGroup);

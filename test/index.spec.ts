@@ -8,7 +8,7 @@ import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import phase6MigrationSql from "../migrations/0006_tguard_captcha.sql?raw";
 import phase7MigrationSql from "../migrations/0007_remove_internal_api.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
-import { handleAdminCallback, handleAdminInput } from "../src/admin-flow";
+import { handleAdminCallback, handleAdminInput, showAdminMenu } from "../src/admin-flow";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
 import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
@@ -27,9 +27,12 @@ const testEnv = {
 	}),
 	BOT_TOKEN: "123456:test-token",
 	TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
-	FORWARD_GROUP_ID: "",
 };
-const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
+const forwardEnv = { ...testEnv };
+
+async function configureForwardGroup(groupId = "-100123") {
+	await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("forward_group_id", groupId, Date.now()).run();
+}
 
 const migrations = [
 	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
@@ -129,6 +132,7 @@ describe("update claims", () => {
 
 describe("bidirectional forwarding", () => {
 	it("creates one topic, copies both directions, and preserves replies", async () => {
+		await configureForwardGroup();
 		const calls: unknown[][] = [];
 		let nextMessageId = 20;
 		const api = {
@@ -159,6 +163,7 @@ describe("bidirectional forwarding", () => {
 	});
 
 	it("recreates a deleted forum topic and retries once", async () => {
+		await configureForwardGroup();
 		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
 		const calls: unknown[][] = [];
 		let copies = 0;
@@ -184,6 +189,7 @@ describe("bidirectional forwarding", () => {
 
 describe("admin topic commands", () => {
 	it("applies verified admin commands to the current topic", async () => {
+		await configureForwardGroup();
 		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
 		const calls: unknown[][] = [];
 		const api = {
@@ -202,6 +208,54 @@ describe("admin topic commands", () => {
 		expect(await env.DB.prepare("SELECT user_id FROM blocked_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
 		expect(calls).toContainEqual(["closeForumTopic", "-100123", 99]);
 		expect(replied).toEqual(["User blocked."]);
+	});
+});
+
+describe("forward group initialization", () => {
+	it("initializes a forum group from its main chat, then forwards private messages", async () => {
+		const calls: unknown[][] = [];
+		const replies: string[] = [];
+		const api = {
+			getChat: async (...args: unknown[]) => { calls.push(["getChat", ...args]); return { is_forum: true }; },
+			getChatMember: async (...args: unknown[]) => { calls.push(["getChatMember", ...args]); return { status: "administrator", can_manage_topics: true }; },
+			createForumTopic: async (...args: unknown[]) => { calls.push(["createForumTopic", ...args]); return { message_thread_id: 99 }; },
+			copyMessage: async (...args: unknown[]) => { calls.push(["copyMessage", ...args]); return 20; },
+		};
+		await showAdminMenu({
+			env: testEnv,
+			api,
+			from: { id: 7 },
+			me: { id: 123456 },
+			chat: { id: -100123, type: "supergroup" },
+			message: { chat: { id: -100123, type: "supergroup" } },
+			reply: async (text: string) => { replies.push(text); },
+		} as never);
+		expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'forward_group_id'").first()).toEqual({ value: "-100123" });
+		expect(replies).toEqual(["Forwarding group initialized.", "Admin settings"]);
+		await forwardMessage({
+			env: forwardEnv,
+			api,
+			message: { message_id: 10, date: 0, chat: { id: 42, type: "private" }, from: { id: 42, is_bot: false, first_name: "Test" }, text: "hello" },
+		} as never);
+		expect(calls).toContainEqual(["copyMessage", "-100123", "42", 10, { message_thread_id: 99 }]);
+	});
+
+	it("rejects a bot without Manage Topics permission", async () => {
+		const replies: string[] = [];
+		await showAdminMenu({
+			env: testEnv,
+			api: {
+				getChat: async () => ({ is_forum: true }),
+				getChatMember: async (_groupId: string, userId: number) => ({ status: "administrator", can_manage_topics: userId !== 123456 }),
+			},
+			from: { id: 7 },
+			me: { id: 123456 },
+			chat: { id: -100123, type: "supergroup" },
+			message: { chat: { id: -100123, type: "supergroup" } },
+			reply: async (text: string) => { replies.push(text); },
+		} as never);
+		expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'forward_group_id'").first()).toBeNull();
+		expect(replies).toEqual(["Make the bot an administrator with Manage Topics permission, then run /admin again."]);
 	});
 });
 
@@ -234,6 +288,10 @@ describe("policy helpers", () => {
 		const replies: string[] = [];
 		expect(await handleUserCommand({ env: testEnv, message: { chat: { id: 42, type: "private" }, text: "/start" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
 		expect(replies).toEqual(["Welcome back"]);
+	});
+
+	it("passes group /start to the administrator menu", async () => {
+		expect(await handleUserCommand({ env: testEnv, message: { chat: { id: -100123, type: "supergroup" }, text: "/start" }, reply: async () => {} } as never)).toBe(false);
 	});
 
 	it("verifies a button captcha against the persisted challenge", async () => {
@@ -296,9 +354,10 @@ describe("D1 admin sessions", () => {
 	});
 
 	it("persists menu settings through the D1 session flow", async () => {
+		await configureForwardGroup("1");
 		const api = { getChatMember: async () => ({ status: "administrator" }) };
 		await handleAdminCallback({ env: testEnv, api, from: { id: 7 }, callbackQuery: { data: "admin:set:captcha", message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async () => {} } as never);
-		await handleAdminInput({ env: testEnv, from: { id: 7 }, message: { chat: { type: "private" }, text: "button" }, reply: async () => {} } as never);
+		await handleAdminInput({ env: testEnv, api, from: { id: 7 }, message: { chat: { id: 1, type: "supergroup" }, text: "button" }, reply: async () => {} } as never);
 		expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'captcha'").first()).toEqual({ value: "button" });
 	});
 });
