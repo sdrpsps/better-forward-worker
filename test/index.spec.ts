@@ -6,15 +6,13 @@ import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
 import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
 import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
 import phase6MigrationSql from "../migrations/0006_tguard_captcha.sql?raw";
+import phase7MigrationSql from "../migrations/0007_remove_internal_api.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { handleAdminCallback, handleAdminInput } from "../src/admin-flow";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
-import { observeInviteLink, resolveInviteLink } from "../src/chat-id";
 import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
-import { consumeBroadcast, enqueueBroadcast, recordDeliveryEvent, retryDelay } from "../src/broadcast";
 import worker from "../src/index";
-import { webhookSetupOptions } from "../src/bot";
 
 const testEnv = {
 	...env,
@@ -29,7 +27,6 @@ const testEnv = {
 	}),
 	BOT_TOKEN: "123456:test-token",
 	TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
-	INTERNAL_API_SECRET: "internal-secret",
 };
 const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
 
@@ -40,6 +37,7 @@ const migrations = [
 	{ name: "0004_phase_4.sql", queries: phase4MigrationSql.split(";").filter(Boolean) },
 	{ name: "0005_phase_5.sql", queries: phase5MigrationSql.split(";").filter(Boolean) },
 	{ name: "0006_tguard_captcha.sql", queries: phase6MigrationSql.split(";").filter(Boolean) },
+	{ name: "0007_remove_internal_api.sql", queries: phase7MigrationSql.split(";").filter(Boolean) },
 ];
 
 beforeAll(async () => {
@@ -52,14 +50,11 @@ afterEach(async () => {
 	await env.DB.exec("DELETE FROM messages");
 	await env.DB.exec("DELETE FROM topics");
 	await env.DB.exec("DELETE FROM settings");
-	await env.DB.exec("DELETE FROM observed_invite_links");
-	await env.DB.exec("DELETE FROM chat_id_resolution_audits");
 	await env.DB.exec("DELETE FROM auto_responses");
 	await env.DB.exec("DELETE FROM blocked_users");
 	await env.DB.exec("DELETE FROM verified_users");
 	await env.DB.exec("DELETE FROM user_permission_overrides");
 	await env.DB.exec("DELETE FROM captcha_challenges");
-	await env.DB.exec("DELETE FROM delivery_events");
 });
 
 describe("Telegram webhook", () => {
@@ -114,9 +109,9 @@ describe("Telegram webhook", () => {
 		expect(await response.json()).toEqual({ ok: true });
 	});
 
-	it("keeps pending updates unless an operator opts into dropping them", () => {
-		expect(webhookSetupOptions("secret").drop_pending_updates).toBe(false);
-		expect(webhookSetupOptions("secret", true).drop_pending_updates).toBe(true);
+	it("does not expose internal routes", async () => {
+		const response = await worker.fetch(new Request("https://example.com/internal/metrics"), testEnv, createExecutionContext());
+		expect(response.status).toBe(404);
 	});
 });
 
@@ -183,22 +178,6 @@ describe("bidirectional forwarding", () => {
 		expect(calls.filter(([name]) => name === "createForumTopic")).toHaveLength(1);
 		expect(calls.filter(([name]) => name === "copyMessage")).toHaveLength(2);
 		expect(await env.DB.prepare("SELECT thread_id FROM topics WHERE user_id = '42'").first()).toEqual({ thread_id: "100" });
-	});
-});
-
-describe("observed invite resolution", () => {
-	it("only resolves links previously observed and stores hashes, not URLs", async () => {
-		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-1")).resolves.toMatchObject({ status: 422, error: "invite_link_not_observed" });
-		await expect(observeInviteLink(env.DB, "https://t.me/+known-token", "-100555")).resolves.toBe(true);
-		await expect(resolveInviteLink(env.DB, "https://t.me/+known-token", "req-2")).resolves.toEqual({ status: 200, chatId: "-100555" });
-		await expect(resolveInviteLink(env.DB, "http://t.me/+known-token", "req-3")).resolves.toMatchObject({ status: 400, error: "invalid_invite_link" });
-		expect(await env.DB.prepare("SELECT hash FROM observed_invite_links").first()).toEqual({ hash: expect.stringMatching(/^[a-f0-9]{64}$/) });
-	});
-
-	it("rate limits repeated resolution attempts", async () => {
-		await observeInviteLink(env.DB, "https://t.me/+rate-token", "-100555");
-		for (let index = 0; index < 10; index += 1) await resolveInviteLink(env.DB, "https://t.me/+rate-token", `rate-${index}`);
-		expect(await resolveInviteLink(env.DB, "https://t.me/+rate-token", "rate-10")).toEqual({ status: 429, error: "resolution_rate_limited" });
 	});
 });
 
@@ -285,42 +264,6 @@ describe("policy helpers", () => {
 		expect(await handleIncomingPolicy({ env: tguardEnv, message: { chat: { type: "private" }, from: { id: 42 }, text: "hello again" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(false);
 		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
 		fetch.mockRestore();
-	});
-});
-
-describe("broadcast queue", () => {
-	it("publishes a small job without touching Telegram in the webhook", async () => {
-		const sent: unknown[] = [];
-		await enqueueBroadcast({ send: async (body) => { sent.push(body); return {} as never; } } as never, { sourceChatId: "-100123", sourceMessageId: 9 });
-		expect(sent).toEqual([{ sourceChatId: "-100123", sourceMessageId: 9 }]);
-		expect(retryDelay(1)).toBe(2);
-		expect(retryDelay(8)).toBe(60);
-	});
-
-	it("records delivery outcomes for metrics", async () => {
-		await recordDeliveryEvent(env.DB, "delivered");
-		await recordDeliveryEvent(env.DB, "failed", "telegram_error");
-		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events ORDER BY id").all()).toMatchObject({ results: [{ status: "delivered", detail: null }, { status: "failed", detail: "telegram_error" }] });
-	});
-
-	it("retries Telegram 429s and records the failed delivery", async () => {
-		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, created_at, updated_at) VALUES (?, ?, ?, ?)").bind("42", "99", 1, 1).run();
-		const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ ok: false, error_code: 429, description: "Too Many Requests" }), { headers: { "content-type": "application/json" } }));
-		const retry = vi.fn();
-		const ack = vi.fn();
-		await consumeBroadcast({ messages: [{ id: "queue-1", body: { sourceChatId: "-100123", sourceMessageId: 9 }, attempts: 1, retry, ack }] } as never, testEnv);
-		fetch.mockRestore();
-		expect(retry).toHaveBeenCalledWith({ delaySeconds: 2 });
-		expect(ack).not.toHaveBeenCalled();
-		expect(await env.DB.prepare("SELECT status, detail FROM delivery_events").all()).toMatchObject({ results: [{ status: "failed", detail: "retrying" }] });
-	});
-
-	it("exposes delivery and update failure metrics behind Bearer auth", async () => {
-		await env.DB.prepare("INSERT INTO processed_updates (update_id, status, attempts, request_id, claimed_at) VALUES (?, ?, ?, ?, ?)").bind(9001, "failed", 1, "req", 1).run();
-		await recordDeliveryEvent(env.DB, "failed", "telegram_error");
-		const response = await worker.fetch(new Request("https://example.com/internal/metrics", { headers: { Authorization: "Bearer internal-secret" } }), { ...testEnv, BROADCAST_QUEUE: { metrics: async () => ({ messages: 3 }) } } as never, createExecutionContext());
-		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({ failedUpdates: { count: 1 }, failedDeliveries: { count: 1 }, queue: { messages: 3 } });
 	});
 });
 

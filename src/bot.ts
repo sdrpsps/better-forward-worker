@@ -1,17 +1,12 @@
 import { Bot, webhookCallback } from "grammy";
 import type { Context } from "grammy";
 import type { UserFromGetMe } from "grammy/types";
-import webhookConfig from "./webhook-config.json";
 import { createDb } from "./db";
 import { claimUpdate, completeUpdate, failUpdate } from "./updates";
 import type { WorkerEnv } from "./app";
 import { editEditedMessage, forwardMessage, handleAdminCommand, handleUserCommand, syncReaction } from "./forwarding";
 import { handleAdminCallback, handleAdminInput, showAdminMenu } from "./admin-flow";
-import { observeInviteLink } from "./chat-id";
 import { handleCaptchaCallback, handleIncomingPolicy } from "./policy";
-
-export const ALLOWED_UPDATES = webhookConfig.allowedUpdates as Array<"message" | "edited_message" | "message_reaction" | "callback_query" | "chat_join_request">;
-export const MAX_CONNECTIONS = webhookConfig.maxConnections;
 
 type Logger = Pick<Console, "debug" | "info" | "warn" | "error">;
 export type BotContext = Context & {
@@ -20,15 +15,6 @@ export type BotContext = Context & {
 	requestId: string;
 	logger: Logger;
 };
-
-export function webhookSetupOptions(secret: string, dropPendingUpdates = false) {
-	return {
-		secret_token: secret,
-		allowed_updates: [...ALLOWED_UPDATES],
-		max_connections: MAX_CONNECTIONS,
-		drop_pending_updates: dropPendingUpdates,
-	} as const;
-}
 
 export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv, requestId = crypto.randomUUID()) {
 	const bot = new Bot<BotContext>(token, { botInfo });
@@ -57,11 +43,6 @@ export function createBot(token: string, botInfo: UserFromGetMe, env: WorkerEnv,
 	bot.command("admin", showAdminMenu);
 	bot.callbackQuery(/^admin:/, handleAdminCallback);
 	bot.callbackQuery(/^captcha:/, handleCaptchaCallback);
-	bot.on("chat_join_request", async (ctx) => {
-		const request = ctx.chatJoinRequest;
-		const link = request?.invite_link?.invite_link;
-		if (link) await observeInviteLink(ctx.env.DB, link, String(request.chat.id));
-	});
 	bot.on("edited_message", editEditedMessage);
 	bot.on("message_reaction", syncReaction);
 	return bot;

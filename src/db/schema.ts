@@ -38,20 +38,6 @@ export const settings = sqliteTable("settings", {
 	updatedAt: integer("updated_at").notNull(),
 });
 
-export const observedInviteLinks = sqliteTable("observed_invite_links", {
-	hash: text("hash").primaryKey(),
-	chatId: text("chat_id").notNull(),
-	observedAt: integer("observed_at").notNull(),
-});
-
-export const chatIdResolutionAudits = sqliteTable("chat_id_resolution_audits", {
-	id: integer("id").primaryKey({ autoIncrement: true }),
-	hash: text("hash").notNull(),
-	result: text("result", { enum: ["resolved", "not_observed", "invalid"] }).notNull(),
-	requestId: text("request_id").notNull(),
-	createdAt: integer("created_at").notNull(),
-});
-
 export const autoResponses = sqliteTable("auto_responses", {
 	id: integer("id").primaryKey({ autoIncrement: true }),
 	trigger: text("trigger").notNull(),
@@ -101,14 +87,6 @@ export const captchaChallenges = sqliteTable("captcha_challenges", {
 
 export const spamKeywords = sqliteTable("spam_keywords", {
 	keyword: text("keyword").primaryKey(),
-	createdAt: integer("created_at").notNull(),
-});
-
-export const deliveryEvents = sqliteTable("delivery_events", {
-	id: integer("id").primaryKey({ autoIncrement: true }),
-	kind: text("kind").notNull(),
-	status: text("status").notNull(),
-	detail: text("detail"),
 	createdAt: integer("created_at").notNull(),
 });
 

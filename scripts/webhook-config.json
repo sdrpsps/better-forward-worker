@@ -1,0 +1,4 @@
+{
+	"allowedUpdates": ["message", "edited_message", "message_reaction", "callback_query"],
+	"maxConnections": 40
+}

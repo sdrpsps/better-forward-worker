@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import webhookConfig from "../src/webhook-config.json" with { type: "json" };
+import webhookConfig from "./webhook-config.json" with { type: "json" };
 
 const { BOT_TOKEN: token, TELEGRAM_WEBHOOK_SECRET: secret, WEBHOOK_URL: webhookUrl } = process.env;
 

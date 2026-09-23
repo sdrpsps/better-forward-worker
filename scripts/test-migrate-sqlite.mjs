@@ -34,7 +34,7 @@ const report = JSON.parse(readFileSync(reportPath, "utf8"));
 if (report.counts.topics !== 1 || report.counts.messages !== 1 || report.counts.settings !== 1 || report.counts.auto_responses !== 1) throw new Error(`unexpected report: ${result}`);
 
 const target = new DatabaseSync(join(directory, "target.db"));
-for (const file of ["migrations/0001_phase_0.sql", "migrations/0002_phase_1.sql", "migrations/0003_phase_3.sql", "migrations/0004_phase_4.sql", "migrations/0005_phase_5.sql", "migrations/0006_tguard_captcha.sql"]) target.exec(readFileSync(file, "utf8"));
+for (const file of ["migrations/0001_phase_0.sql", "migrations/0002_phase_1.sql", "migrations/0003_phase_3.sql", "migrations/0004_phase_4.sql", "migrations/0005_phase_5.sql", "migrations/0006_tguard_captcha.sql", "migrations/0007_remove_internal_api.sql"]) target.exec(readFileSync(file, "utf8"));
 target.exec(readFileSync(output, "utf8"));
 target.exec(readFileSync(output, "utf8"));
 const count = (table) => target.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;

@@ -15,14 +15,10 @@
 		{
 			"binding": "DB",
 			"database_name": "better-forward",
-			"database_id": "00000000-0000-0000-0000-000000000000",
+			"database_id": "bcdb2cb9-4e23-49a4-a66b-4a8e83a4bb63",
 			"migrations_dir": "migrations"
 		}
-	],
-	"queues": {
-		"producers": [{ "binding": "BROADCAST_QUEUE", "queue": "better-forward-broadcast" }],
-		"consumers": [{ "queue": "better-forward-broadcast", "max_batch_size": 10, "max_batch_timeout": 5, "max_concurrency": 1 }]
-	}
+	]
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement

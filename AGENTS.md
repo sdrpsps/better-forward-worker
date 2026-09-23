@@ -18,11 +18,10 @@
 - HTTP 路由仅负责认证、解析、调用应用逻辑与响应；grammY 负责 update 分发；复杂 SQL 不散落在 handler 中。
 - Drizzle schema 是数据库结构的代码级权威来源，迁移只表达结构变更。Cloudflare bindings 必须经显式类型传递，不读取隐式全局变量。
 - Telegram ID 在 JavaScript 边界使用字符串，避免 `number` 丢失 64 位精度。
-- 邀请链接是敏感凭据：默认只存规范化链接的 SHA-256；日志不得记录完整链接。
-- Webhook 必须验证 `X-Telegram-Bot-Api-Secret-Token`；内部 API 使用独立 secret 鉴权，隐藏路径不是安全措施。
+- Webhook 必须验证 `X-Telegram-Bot-Api-Secret-Token`。
 - 不依赖 Worker 实例内存保存会话、验证码、去重状态或设置；处理每一个 update 时考虑 Telegram 重试与重复投递。
 - 创建话题、消息映射等关键写入须有数据库唯一约束或等价幂等保护。无界广播必须进入 Cloudflare Queue。
-- Bot API 不能从任意私有邀请链接反查 chat ID；只实现 `PLAN.md` 中已观察链接或 `request_chat` 的可靠路径，不抓取 `t.me` HTML。
+- 群组选择仅使用 `request_chat` 的可靠路径；不抓取 `t.me` HTML。
 
 ## 测试、文档与提交
 
