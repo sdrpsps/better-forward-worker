@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
-const token = process.env.BOT_TOKEN;
+import { prompt } from "./prompt.mjs";
 
+let token;
+try {
+	token = await prompt("Bot token: ");
+} catch (error) {
+	console.error(error instanceof Error ? error.message : "Unable to read bot token");
+	process.exit(2);
+}
 if (!token) {
-	console.error("BOT_TOKEN is required");
+	console.error("Bot token is required");
 	process.exit(2);
 }
 
