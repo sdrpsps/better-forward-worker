@@ -4,9 +4,9 @@
 
 ## 目标与边界
 
-将 BetterForward 重写为 Cloudflare Workers 原生 TypeScript 服务，逐步保留私聊与管理员群组话题间双向转发、消息映射、编辑删除、话题生命周期、管理命令/菜单/多步骤配置、自动回复、验证码、垃圾消息与封禁、权限与备注、三语文案，以及可验证的 SQLite→D1 数据迁移。
+将 BetterForward 重写为 Cloudflare Workers 原生 TypeScript 服务，逐步保留私聊与管理员群组话题间双向转发、消息映射、编辑删除、话题生命周期、管理命令/菜单/多步骤配置、自动回复、验证码、垃圾消息与封禁、权限与备注、三语文案，以及可验证的 D1 schema migration。
 
-这是架构重写：旧 Python 副本只用来确认行为与迁移数据，不定义 TypeScript 的模块边界。旧快照为 `012a8badde9bb8a768288a3a269e2f3e8118aed5`（上游 `main`，2026-08-28），位于 `/Users/sunny/Documents/Codex/2026-09-22/https-github-com-sidecloudgroup-betterforward-https/work/betterforward-source`，只读，不在其中实现。
+这是架构重写：旧 Python 副本只用来确认行为与数据语义，不定义 TypeScript 的模块边界。旧快照为 `012a8badde9bb8a768288a3a269e2f3e8118aed5`（上游 `main`，2026-08-28），位于 `/Users/sunny/Documents/Codex/2026-09-22/https-github-com-sidecloudgroup-betterforward-https/work/betterforward-source`，只读，不在其中实现。
 
 ## 确定的技术选择
 
@@ -39,7 +39,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 | `src/bot.py`、`handlers/message_handler.py` | `topics`、`messages`；forum topic、转发、回复、编辑、reaction，九类消息媒体 | 保留，Phase 1/2；用 D1 唯一约束、消息映射和 grammY Bot API 重写 |
 | `handlers/command_handler.py` | 用户与管理员命令：help、ban、terminate、delete、verify、note、refresh、permissions | 保留，按 Phase 2/3/4 分批迁移 |
 | `handlers/admin_handler.py`、`callback_handler.py` | 菜单、自动回复、验证码、时区、TGuard、垃圾关键词、封禁回复 | 保留，Phase 3/4；多步骤操作改 D1 state |
-| `database.py`、`db_migrate/*.py` | `settings`、`auto_response`、`verified_users`、`blocked_users`、`user_permission_overrides`、topic note 与 indexes | 保留数据语义，Phase 1/4 重新建 schema；SQLite 只在 Phase 6 工具中读取 |
+| `database.py`、`db_migrate/*.py` | `settings`、`auto_response`、`verified_users`、`blocked_users`、`user_permission_overrides`、topic note 与 indexes | 保留数据语义，Phase 1/4 重新建 schema |
 | `utils/message_queue.py`、`diskcache`、`infinity_polling` | 进程内队列、缓存、常驻 polling、本地文件状态 | 删除；Webhook + D1 |
 
 上游直接调用 `get_chat`、`get_chat_member`、`get_me`、`set_my_commands`、发送/编辑/删除/转发消息和 topic API。Worker 版本继续经 grammY 调用；Phase 0 webhook 提供 bot info，因此不会在请求处理中隐式 `getMe`。
@@ -94,7 +94,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
 - [x] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
 
-**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`0006_tguard_captcha.sql` 为外部 TGuard token/URL 增加持久化字段。`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本、InlineKeyboard 按钮和真实 TGuard external API（`/api/verification/create`、`/api/verification-status/{token}`）；TGuard API key 只从 Worker secret 读取，D1 只保存短期 token/URL，callback/外部状态均校验用户和过期时间。消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。`pnpm typecheck`、`pnpm test -- --run`（22 tests）、`pnpm test:migration` 和 `git diff --check` 通过。
+**Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`0006_tguard_captcha.sql` 为外部 TGuard token/URL 增加持久化字段。`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本、InlineKeyboard 按钮和真实 TGuard external API（`/api/verification/create`、`/api/verification-status/{token}`）；TGuard API key 只从 Worker secret 读取，D1 只保存短期 token/URL，callback/外部状态均校验用户和过期时间。消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。`pnpm typecheck`、`pnpm test -- --run`（22 tests）和 `git diff --check` 通过。
 
 验收：设置跨请求保持；过期状态不依赖 Cron 也不会被接受；正则输入有安全边界。
 
@@ -106,15 +106,15 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 验收：未公开路径不存在；Webhook 与健康检查继续可用。
 
-## Phase 6 — 数据迁移与切换
+## Phase 6 — D1 schema migration 与切换
 
-- [x] 编写 SQLite→D1 转换工具（Worker 运行时不读取 SQLite），支持 dry-run、备份、回滚与重复执行。
-- [x] 校验 topics、消息映射、settings、rules、verified/blocked 用户、权限记录计数；在测试 bot 回归。
+- [x] D1 schema migration 统一使用 Wrangler，分别验证本地与远端目标。
+- [x] 不保留 SQLite 数据转换工具：没有需要导入的既有数据库。
 - [ ] 配置生产 secret、D1、Webhook，停止旧 polling、处理 pending updates、切换并观察重复/丢失；观察窗口后删除 Python/Docker/旧部署文档。
 
-**Phase 6 实现与验收（2026-09-22；2026-09-23 更新）：** `scripts/migrate-sqlite.mjs` 仅使用 Node 24 `node:sqlite` 在部署外读取旧库，生成 D1 可执行的 `up.sql`、`rollback.sql` 和 JSON 计数报告；`--dry-run` 不写 SQL/备份，`--backup` 复制源库，`--rollback report.json` 重建回滚 SQL，topic/message/settings/rules/verified/blocked/permission 均按稳定 key 幂等，重复迁移不会复制 auto response，settings 不覆盖目标已有值且 rollback 只删除本次写入值。D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；后者会在应用前确认并创建备份。远端 D1 已应用至 `0007_remove_internal_api.sql`，清除了已删除内部 API 专用表。`pnpm bot:info` 从 `BOT_TOKEN` 调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON；不接受命令行 token。`pnpm webhook:set` 从 `BOT_TOKEN`、`TELEGRAM_WEBHOOK_SECRET`、`WEBHOOK_URL` 调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates。该脚本不写入 Cloudflare，运维必须单独以相同值执行 `wrangler secret put TELEGRAM_WEBHOOK_SECRET`，避免脚本隐式改变生产 Worker secret。`pnpm test:migration` 使用 Node 24 fixture 创建旧 schema、执行全部迁移 SQL（含 0007）、重复执行 up、校验各表计数并执行 rollback。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
+**Phase 6 实现与验收（2026-09-23 更新）：** D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；两者始终应用同一组 `migrations/*.sql`，仅目标不同。远端 D1 已应用至 `0007_remove_internal_api.sql`，清除了已删除内部 API 专用表。没有既有 SQLite 数据库，因此删除 SQLite→D1 导入、计数校验与回滚脚本，不保留无数据源的转换链路。`pnpm bot:info` 从 `BOT_TOKEN` 调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON；不接受命令行 token。`pnpm webhook:set` 从 `BOT_TOKEN`、`TELEGRAM_WEBHOOK_SECRET`、`WEBHOOK_URL` 调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates。该脚本不写入 Cloudflare，运维必须单独以相同值执行 `wrangler secret put TELEGRAM_WEBHOOK_SECRET`，避免脚本隐式改变生产 Worker secret。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
 
-验收：迁移报告数量一致；生产 smoke test 通过；回滚经演练可执行。
+验收：本地 D1 schema migration 可重复执行；生产 smoke test 通过。
 
 ## 每阶段结束清单
 
@@ -124,7 +124,7 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## 尚待确认（不阻塞 Phase 0）
 
-- 生产用户/日消息规模；是否完整迁移现有 SQLite；是否要求菜单文案层级完全一致。
+- 生产用户/日消息规模；是否要求菜单文案层级完全一致。
 - 是否需要自定义 Telegram Bot API 地址（默认可选 secret/var，不围绕它建立抽象）。
 
 ## 依赖策略
