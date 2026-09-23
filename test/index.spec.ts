@@ -27,6 +27,7 @@ const testEnv = {
 	}),
 	BOT_TOKEN: "123456:test-token",
 	TELEGRAM_WEBHOOK_SECRET: "test-webhook-secret",
+	FORWARD_GROUP_ID: "",
 };
 const forwardEnv = { ...testEnv, FORWARD_GROUP_ID: "-100123" };
 
