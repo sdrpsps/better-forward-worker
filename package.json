@@ -10,7 +10,8 @@
 		"cf-typegen": "wrangler types",
 		"bot:info": "node scripts/get-bot-info.mjs",
 		"webhook:set": "node scripts/set-webhook.mjs",
-		"migrate:d1": "wrangler d1 migrations apply DB --remote",
+		"migrate:d1:local": "wrangler d1 migrations apply DB --local",
+		"migrate:d1:remote": "wrangler d1 migrations apply DB --remote",
 		"migrate:sqlite": "node scripts/migrate-sqlite.mjs",
 		"test:migration": "node scripts/test-migrate-sqlite.mjs",
 		"typecheck": "tsc --noEmit"
