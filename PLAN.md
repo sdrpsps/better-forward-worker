@@ -84,9 +84,9 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 - [x] 迁移管理菜单/callback 和全部多步骤配置，支持取消、超时、并发管理员。
 - [x] 以目标 forum 群主聊天的管理员命令完成首次绑定与权限校验。
-- [x] 修正首次转发群初始化：在目标 forum 群主聊天由管理员执行 `/start`、`/help` 或 `/admin`，验证群、操作者与 Bot 权限后原子写入 D1。
+- [x] 修正首次转发群初始化：在目标 forum 群主聊天由管理员执行 `/setup`、`/start`、`/help` 或 `/admin`，验证群、操作者与 Bot 权限后原子写入 D1。
 
-**Phase 3 实现与验收（2026-09-22；2026-09-23 更新）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，设置菜单会把 `default_message`/`captcha` 写入 D1，Phase 4 的具体策略继续复用该状态机。首次初始化不能信任私聊群组选择的任意发送者，也不能把配置只留在临时 session；改为在目标 forum 群主聊天验证管理员和 Bot 权限后原子持久化 `settings.forward_group_id`。管理员可用 `/start`、`/help` 或 `/admin` 打开流程，私聊 `/start` 保持欢迎文案。这与原版从转发群主聊天打开管理菜单的行为一致，且不解析邀请链接或 `t.me` 页面。`pnpm typecheck`、`pnpm test -- --run`（19 tests）、本地 D1 migration 和 Wrangler 本地 `/health` 200 / 无 secret webhook 401 均通过；测试覆盖 forum 初始化、Bot 缺少 Manage Topics 权限拒绝和初始化后的首条私聊转发。
+**Phase 3 实现与验收（2026-09-22；2026-09-24 更新）：** `src/admin-flow.ts` 使用原生 grammY inline/reply keyboard，管理员资格通过 `getChatMember` 验证；D1 `admin_sessions` 提供每个管理员独立 scope、取消和过期状态，设置菜单会把 `default_message`/`captcha` 写入 D1，Phase 4 的具体策略继续复用该状态机。首次初始化不能信任私聊群组选择的任意发送者，也不能把配置只留在临时 session；改为在目标 forum 群主聊天验证管理员和 Bot 权限后原子持久化 `settings.forward_group_id`。管理员可用明确的 `/setup`，或 `/start`、`/help`、`/admin` 打开流程，私聊 `/start` 保持欢迎文案。这与原版从转发群主聊天打开管理菜单的行为一致，且不解析邀请链接或 `t.me` 页面。`pnpm typecheck`、`pnpm test -- --run`（19 tests）、本地 D1 migration 和 Wrangler 本地 `/health` 200 / 无 secret webhook 401 均通过；测试覆盖 forum 初始化、Bot 缺少 Manage Topics 权限拒绝和初始化后的首条私聊转发。
 
 验收：群组选择验证不会泄露群组凭据。
 

@@ -290,8 +290,10 @@ describe("policy helpers", () => {
 		expect(replies).toEqual(["Welcome back"]);
 	});
 
-	it("passes group /start to the administrator menu", async () => {
-		expect(await handleUserCommand({ env: testEnv, message: { chat: { id: -100123, type: "supergroup" }, text: "/start" }, reply: async () => {} } as never)).toBe(false);
+	it("passes group setup commands to the administrator menu", async () => {
+		for (const text of ["/start", "/setup"]) {
+			expect(await handleUserCommand({ env: testEnv, message: { chat: { id: -100123, type: "supergroup" }, text }, reply: async () => {} } as never)).toBe(false);
+		}
 	});
 
 	it("verifies a button captcha against the persisted challenge", async () => {
