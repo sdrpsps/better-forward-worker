@@ -92,10 +92,14 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 
 ## Phase 4 — 策略与辅助功能
 
-- [x] 自动回复（文本、媒体、正则、时间窗、时区）、默认欢迎消息、封禁与封禁回复、用户备注、全局/单用户权限。
-- [x] 按钮/数学题/TGuard 验证、过期临时状态、垃圾关键词/话题和三语 i18n 缺失键验证。
+- [x] 自动回复（文本、媒体、正则、时间窗、时区）的管理员创建、查看和删除；垃圾关键词的管理员创建、查看和删除。
+- [x] 恢复旧系统实际使用的七类消息权限（photo、sticker、video、voice、file、link、username）及全局/单用户 allow/deny；拒绝未定义权限键，不再接受无效配置。
+- [x] 按 Telegram `language_code` 分发英语、简体中文、日语文案，并以测试验证所有已声明键都有三语翻译。
+- [x] 删除无读取方的 Worker context 字段、已废弃 callback payload、完成态 admin session 写入和 captcha attempts 列；新结构 migration 由 Drizzle Kit 生成，Wrangler 只负责应用。
 
 **Phase 4 实现与验收（2026-09-22）：** `0004_phase_4.sql` 新增自动回复、blocked/verified、权限覆盖、captcha challenge 和 spam keyword 表；`0006_tguard_captcha.sql` 为外部 TGuard token/URL 增加持久化字段。`src/policy.ts` 提供三语文案、缺失键检查、正则长度/危险结构边界、时区时间窗、D1 封禁/权限读取、垃圾关键词阻断和过期数学题。自动回复支持文本及 `photo:FILE_ID`、`video:FILE_ID`、`document:FILE_ID`、`audio:FILE_ID`、`voice:FILE_ID`、`animation:FILE_ID` 媒体格式；`/start` 从 `settings.default_message` 读取欢迎文案。验证码支持数学文本、InlineKeyboard 按钮和真实 TGuard external API（`/api/verification/create`、`/api/verification-status/{token}`）；TGuard API key 只从 Worker secret 读取，D1 只保存短期 token/URL，callback/外部状态均校验用户和过期时间。消息入口在转发前执行封禁、验证码、垃圾关键词、有效权限和自动回复短路，管理员支持全局 `/permission key allow|deny` 及话题内 `/allow key`、`/deny key`，所有挑战与验证状态写 D1，未配置 captcha 时不改变现有行为。用户备注沿用 `topics.note`。`pnpm typecheck`、`pnpm test -- --run`（22 tests）和 `git diff --check` 通过。
+
+**Phase 4 补全与清理（2026-09-24）：** 管理员菜单现以 D1 `admin_sessions` 可靠地完成自动回复的 trigger、literal/regex、文本或全部支持的 Telegram 媒体、全天或起止时间和 IANA 时区配置，并可分页查看、启用/停用和删除规则；垃圾关键词也可新增、查看和删除。权限注册表只接受旧系统真实使用的七个键，`all` 展开为这七项，消息分类覆盖 photo、sticker/animation、video、voice、audio/document、link 和 username；不再把任意字符串静默保存为无效权限。单用户权限覆盖按 `user_id + permission_key` 查询，绝不影响其他用户。`src/i18n.ts` 根据 Telegram `language_code` 选择英文、简体中文或日文，并测试全部声明 key。`/note` 无参数时读取当前备注。删除未读取的 bot context `db`/`logger`/`requestId`、已废弃的 `admin:set` payload fallback、重复的 `start` script、未使用的 TypeScript JSX/JavaScript compatibility options、配置完成后无消费者的 session 写入，以及没有读取者的 blocked-user profile 列。`drizzle.config.ts` 与 `migrations/meta/` 以 `0007` 的已部署最终 schema 建立 Drizzle Kit 基线；`pnpm db:generate` 生成 `0008_remove_captcha_attempts.sql` 与 `0009_remove_blocked_user_profile.sql`，Wrangler 继续应用它们。`0008` 同时清除从未有消费者的 `permission:forward` 及对应 override；这是有意的兼容移除，生产切换前不迁移任何有效旧系统权限。`pnpm typecheck`、`pnpm test -- --run`（24 tests）、`pnpm db:generate`（无待生成变更）、`pnpm db:check`、本地 D1 migrations 和 Wrangler 本地 `/health` 200 / 无效 webhook secret 401 均通过。
 
 验收：设置跨请求保持；过期状态不依赖 Cron 也不会被接受；正则输入有安全边界。
 
@@ -113,7 +117,9 @@ Telegram → Hono secret 验证 → grammY → forwarding application services �
 - [x] 不保留 SQLite 数据转换工具：没有需要导入的既有数据库。
 - [ ] 配置生产 secret、D1、Webhook，停止旧 polling、处理 pending updates、切换并观察重复/丢失；观察窗口后删除 Python/Docker/旧部署文档。
 
-**Phase 6 实现与验收（2026-09-23 更新）：** D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；两者始终应用同一组 `migrations/*.sql`，仅目标不同。远端 D1 已应用至 `0007_remove_internal_api.sql`，清除了已删除内部 API 专用表。没有既有 SQLite 数据库，因此删除 SQLite→D1 导入、计数校验与回滚脚本，不保留无数据源的转换链路。`pnpm bot:info` 交互式读取 bot token，调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON。`pnpm webhook:set` 交互式读取 bot token、webhook secret 和 webhook URL，调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates；不会读取环境变量或写入 Cloudflare。生产转发群由 Phase 3 的群内 `/start`、`/help` 或 `/admin` 初始化写入 D1；部署期 `FORWARD_GROUP_ID` 不再是运行时配置来源。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
+**Phase 6 实现与验收（2026-09-23 更新）：** D1 结构迁移统一使用 `wrangler d1 migrations apply DB`：`pnpm migrate:d1:local` 作用于本机状态，`pnpm migrate:d1:remote` 作用于远端 D1；两者始终应用同一组 `migrations/*.sql`，仅目标不同。没有既有 SQLite 数据库，因此删除 SQLite→D1 导入、计数校验与回滚脚本，不保留无数据源的转换链路。`pnpm bot:info` 交互式读取 bot token，调用 Telegram `getMe`，且仅向标准输出写入可直接作为 `BOT_INFO_JSON` 的 `result` JSON。`pnpm webhook:set` 交互式读取 bot token、webhook secret 和 webhook URL，调用 Telegram `setWebhook`，使用脚本配置的 allowed updates、40 个连接并保留 pending updates；不会读取环境变量或写入 Cloudflare。生产转发群由 Phase 3 的群内 `/start`、`/help` 或 `/admin` 初始化写入 D1；部署期 `FORWARD_GROUP_ID` 不再是运行时配置来源。生产 secrets、Worker 部署、测试 bot smoke、pending updates 排空、旧 polling 停止和观察窗口仍需要实际凭据与人工切换，因此保留为部署前 checklist，不在本地提交中宣称完成。
+
+**迁移重置（2026-09-24）：** 用户确认线上 D1 没有需要保留的业务数据后，删除原 `better-forward` D1 并创建同名的新数据库，`wrangler.jsonc` 更新为新 UUID。历史手写 `0001`–`0007`、Drizzle 过渡期 `0008`–`0009` 和过渡 snapshot 全部删除；不再维护基线或兼容清理链。`src/db/schema.ts` 是唯一结构权威，Drizzle Kit 从它生成唯一初始迁移 `0000_initial_schema.sql` 和对应 metadata；测试也只应用这一个文件。新的远端数据库已应用 `0000_initial_schema.sql`，11 张业务表的总行数为 0，随后所有结构更改都由 `pnpm db:generate` 增量生成。此前段落提及的 `0001`–`0009` 仅记录当时的阶段历史，并非当前仓库或远端数据库状态。重置前的 Worker 部署仍绑定已删除的旧 UUID；必须以更新后的 `wrangler.jsonc` 部署 Worker，才会切换到新 D1。
 
 验收：本地 D1 schema migration 可重复执行；生产 smoke test 通过。
 

@@ -1,17 +1,14 @@
 import { applyD1Migrations, env, createExecutionContext, waitOnExecutionContext, SELF } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import phase0MigrationSql from "../migrations/0001_phase_0.sql?raw";
-import phase1MigrationSql from "../migrations/0002_phase_1.sql?raw";
-import phase3MigrationSql from "../migrations/0003_phase_3.sql?raw";
-import phase4MigrationSql from "../migrations/0004_phase_4.sql?raw";
-import phase5MigrationSql from "../migrations/0005_phase_5.sql?raw";
-import phase6MigrationSql from "../migrations/0006_tguard_captcha.sql?raw";
-import phase7MigrationSql from "../migrations/0007_remove_internal_api.sql?raw";
+import initialSchemaMigrationSql from "../migrations/0000_initial_schema.sql?raw";
 import { cancelAdminSession, loadAdminSession, saveAdminSession } from "../src/admin-sessions";
 import { handleAdminCallback, handleAdminInput, showAdminMenu } from "../src/admin-flow";
+import { handleAdminPolicyCallback, handleAdminPolicyInput } from "../src/admin-policy";
 import { claimUpdate, completeUpdate, failUpdate } from "../src/updates";
 import { forwardMessage, handleAdminCommand, handleUserCommand } from "../src/forwarding";
-import { answerCaptcha, canForward, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
+import { missingTranslationKeys } from "../src/i18n";
+import { messagePermissions } from "../src/permissions";
+import { answerCaptcha, handleCaptchaCallback, handleIncomingPolicy, isWithinTimeWindow, matchesTrigger, validateRegex } from "../src/policy";
 import worker from "../src/index";
 
 const testEnv = {
@@ -34,15 +31,7 @@ async function configureForwardGroup(groupId = "-100123") {
 	await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("forward_group_id", groupId, Date.now()).run();
 }
 
-const migrations = [
-	{ name: "0001_phase_0.sql", queries: phase0MigrationSql.split(";").filter(Boolean) },
-	{ name: "0002_phase_1.sql", queries: phase1MigrationSql.split(";").filter(Boolean) },
-	{ name: "0003_phase_3.sql", queries: phase3MigrationSql.split(";").filter(Boolean) },
-	{ name: "0004_phase_4.sql", queries: phase4MigrationSql.split(";").filter(Boolean) },
-	{ name: "0005_phase_5.sql", queries: phase5MigrationSql.split(";").filter(Boolean) },
-	{ name: "0006_tguard_captcha.sql", queries: phase6MigrationSql.split(";").filter(Boolean) },
-	{ name: "0007_remove_internal_api.sql", queries: phase7MigrationSql.split(";").filter(Boolean) },
-];
+const migrations = [{ name: "0000_initial_schema.sql", queries: initialSchemaMigrationSql.split(";").filter(Boolean) }];
 
 beforeAll(async () => {
 	await applyD1Migrations(env.DB, migrations);
@@ -59,6 +48,7 @@ afterEach(async () => {
 	await env.DB.exec("DELETE FROM verified_users");
 	await env.DB.exec("DELETE FROM user_permission_overrides");
 	await env.DB.exec("DELETE FROM captcha_challenges");
+	await env.DB.exec("DELETE FROM spam_keywords");
 });
 
 describe("Telegram webhook", () => {
@@ -209,6 +199,14 @@ describe("admin topic commands", () => {
 		expect(calls).toContainEqual(["closeForumTopic", "-100123", 99]);
 		expect(replied).toEqual(["User blocked."]);
 	});
+
+	it("reads a saved topic note instead of silently overwriting it", async () => {
+		await configureForwardGroup();
+		await env.DB.prepare("INSERT INTO topics (user_id, thread_id, note, created_at, updated_at) VALUES (?, ?, ?, ?, ?)").bind("42", "99", "Needs follow-up", 1, 1).run();
+		const replies: string[] = [];
+		expect(await handleAdminCommand({ env: forwardEnv, api: { getChatMember: async () => ({ status: "administrator" }) }, from: { id: 7 }, message: { chat: { id: -100123, type: "supergroup" }, message_thread_id: 99, text: "/note" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
+		expect(replies).toEqual(["Note: Needs follow-up"]);
+	});
 });
 
 describe("forward group initialization", () => {
@@ -264,9 +262,9 @@ describe("policy helpers", () => {
 		expect(validateRegex("(a+)+")).toBe(false);
 		expect(matchesTrigger("hello world", "world", false)).toBe(true);
 		expect(isWithinTimeWindow(new Date("2026-09-22T23:30:00Z"), "22:00", "02:00", "UTC")).toBe(true);
-		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 10, 0).run();
+		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at) VALUES (?, ?, ?, ?)").bind("42", 2, 3, 10).run();
 		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(false);
-		await env.DB.prepare("INSERT OR REPLACE INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, 100, 0).run();
+		await env.DB.prepare("INSERT OR REPLACE INTO captcha_challenges (user_id, left_operand, right_operand, expires_at) VALUES (?, ?, ?, ?)").bind("42", 2, 3, 100).run();
 		expect(await answerCaptcha(env.DB, "42", 5, 11)).toBe(true);
 		expect(await env.DB.prepare("SELECT user_id FROM verified_users WHERE user_id = '42'").first()).toEqual({ user_id: "42" });
 	});
@@ -297,7 +295,7 @@ describe("policy helpers", () => {
 	});
 
 	it("verifies a button captcha against the persisted challenge", async () => {
-		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at, attempts) VALUES (?, ?, ?, ?, ?)").bind("42", 2, 3, Date.now() + 60_000, 0).run();
+		await env.DB.prepare("INSERT INTO captcha_challenges (user_id, left_operand, right_operand, expires_at) VALUES (?, ?, ?, ?)").bind("42", 2, 3, Date.now() + 60_000).run();
 		const callbacks: unknown[] = [];
 		const edits: string[] = [];
 		expect(await handleCaptchaCallback({ env: testEnv, from: { id: 42 }, callbackQuery: { data: "captcha:42:5" }, answerCallbackQuery: async (options: unknown) => { callbacks.push(options); }, editMessageText: async (text: string) => { edits.push(text); } } as never)).toBe(true);
@@ -306,11 +304,25 @@ describe("policy helpers", () => {
 		expect(edits).toEqual(["Saved."]);
 	});
 
-	it("applies global and per-user forwarding permissions", async () => {
-		await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("permission:forward", "deny", 1).run();
-		expect(await canForward(env.DB, "42")).toBe(false);
-		await env.DB.prepare("INSERT INTO user_permission_overrides (user_id, permission_key, override, updated_at) VALUES (?, ?, ?, ?)").bind("42", "forward", "allow", 2).run();
-		expect(await canForward(env.DB, "42")).toBe(true);
+	it("enforces every configured message permission and honors a user override", async () => {
+		await env.DB.prepare("INSERT INTO settings (key, value, updated_at) VALUES (?, ?, ?)").bind("permission:photo", "deny", 1).run();
+		const replies: string[] = [];
+		expect(await handleIncomingPolicy({ env: testEnv, from: { language_code: "ja" }, message: { chat: { type: "private" }, from: { id: 42 }, photo: [{ file_id: "photo" }] }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
+		expect(replies).toEqual(["写真メッセージは送信できません。"]);
+		await env.DB.prepare("INSERT INTO user_permission_overrides (user_id, permission_key, override, updated_at) VALUES (?, ?, ?, ?)").bind("42", "photo", "allow", 2).run();
+		expect(await handleIncomingPolicy({ env: testEnv, message: { chat: { type: "private" }, from: { id: 42 }, photo: [{ file_id: "photo" }] }, reply: async () => {} } as never)).toBe(false);
+		const otherReplies: string[] = [];
+		expect(await handleIncomingPolicy({ env: testEnv, message: { chat: { type: "private" }, from: { id: 43 }, photo: [{ file_id: "photo" }] }, reply: async (text: string) => { otherReplies.push(text); } } as never)).toBe(true);
+		expect(otherReplies).toEqual(["You cannot send photo messages."]);
+	});
+
+	it("classifies every legacy permission key and saves a validated all-key command", async () => {
+		expect(messagePermissions({ photo: [{}], animation: {}, video: {}, voice: {}, document: {}, text: "https://example.com @name" } as never).sort()).toEqual(["file", "link", "photo", "sticker", "username", "video", "voice"]);
+		await configureForwardGroup();
+		const replies: string[] = [];
+		expect(await handleAdminCommand({ env: forwardEnv, api: { getChatMember: async () => ({ status: "administrator" }) }, from: { id: 7 }, message: { chat: { id: -100123, type: "supergroup" }, text: "/permission all deny" }, reply: async (text: string) => { replies.push(text); } } as never)).toBe(true);
+		expect(await env.DB.prepare("SELECT key FROM settings WHERE key LIKE 'permission:%' ORDER BY key").all()).toMatchObject({ results: [{ key: "permission:file" }, { key: "permission:link" }, { key: "permission:photo" }, { key: "permission:sticker" }, { key: "permission:username" }, { key: "permission:video" }, { key: "permission:voice" }] });
+		expect(replies).toEqual(["Global permission saved."]);
 	});
 
 	it("creates and polls a TGuard verification session", async () => {
@@ -361,5 +373,58 @@ describe("D1 admin sessions", () => {
 		await handleAdminCallback({ env: testEnv, api, from: { id: 7 }, callbackQuery: { data: "admin:set:captcha", message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async () => {} } as never);
 		await handleAdminInput({ env: testEnv, api, from: { id: 7 }, message: { chat: { id: 1, type: "supergroup" }, text: "button" }, reply: async () => {} } as never);
 		expect(await env.DB.prepare("SELECT value FROM settings WHERE key = 'captcha'").first()).toEqual({ value: "button" });
+	});
+});
+
+describe("administrator policy management", () => {
+	const api = { getChatMember: async () => ({ status: "administrator" }) };
+	const base = { env: testEnv, api, from: { id: 7 }, chat: { id: 1, type: "supergroup" } };
+
+	it("persists, lists, and deletes a complete auto reply through the D1 session flow", async () => {
+		await configureForwardGroup("1");
+		const replies: string[] = [];
+		const callback = async (data: string) => handleAdminPolicyCallback({ ...base, message: { chat: { id: 1 }, message_thread_id: undefined }, callbackQuery: { data, message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async () => {} } as never);
+		const input = async (message: Record<string, unknown>) => handleAdminPolicyInput({ ...base, message: { chat: { id: 1, type: "supergroup" }, message_id: 1, date: 0, ...message }, reply: async (text: string) => { replies.push(text); } } as never);
+		await callback("admin:auto:add");
+		await input({ text: "hello" });
+		await callback("admin:auto:literal");
+		await input({ photo: [{ file_id: "photo-1" }] });
+		await callback("admin:auto:window");
+		await input({ text: "09:00" });
+		await input({ text: "18:00" });
+		await input({ text: "Asia/Shanghai" });
+		expect(await env.DB.prepare("SELECT trigger, response, response_type, is_regex, start_time, end_time, time_zone FROM auto_responses").first()).toEqual({ trigger: "hello", response: "photo:photo-1", response_type: "media", is_regex: 0, start_time: "09:00", end_time: "18:00", time_zone: "Asia/Shanghai" });
+		expect(replies.at(-1)).toBe("Auto reply saved.");
+		const edits: string[] = [];
+		await handleAdminPolicyCallback({ ...base, message: { chat: { id: 1 } }, callbackQuery: { data: "admin:auto:list:1", message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async (text: string) => { edits.push(text); } } as never);
+		const rule = await env.DB.prepare("SELECT id FROM auto_responses").first<{ id: number }>();
+		expect(edits[0]).toContain(`#${rule!.id} hello → photo:photo-1 (09:00-18:00 Asia/Shanghai)`);
+		await callback(`admin:auto:toggle:${rule!.id}`);
+		expect(await env.DB.prepare("SELECT enabled FROM auto_responses WHERE id = ?").bind(rule!.id).first()).toEqual({ enabled: 0 });
+		await callback(`admin:auto:delete:${rule!.id}`);
+		expect(await env.DB.prepare("SELECT id FROM auto_responses").first()).toBeNull();
+	});
+
+	it("persists, lists, and deletes spam keywords through the D1 session flow", async () => {
+		await configureForwardGroup("1");
+		const callback = async (data: string) => handleAdminPolicyCallback({ ...base, message: { chat: { id: 1 } }, callbackQuery: { data, message: { chat: { id: 1 } } }, answerCallbackQuery: async () => {}, editMessageText: async () => {} } as never);
+		await callback("admin:spam:add");
+		await handleAdminPolicyInput({ ...base, message: { message_id: 1, date: 0, chat: { id: 1, type: "supergroup" }, text: "scam" }, reply: async () => {} } as never);
+		expect(await env.DB.prepare("SELECT keyword FROM spam_keywords").first()).toEqual({ keyword: "scam" });
+		await callback("admin:spam:delete:scam");
+		expect(await env.DB.prepare("SELECT keyword FROM spam_keywords").first()).toBeNull();
+	});
+});
+
+describe("translations and generated schema migration", () => {
+	it("has a translation for every key and removes unused columns", async () => {
+		expect(missingTranslationKeys()).toEqual([]);
+		const replies: string[] = [];
+		await handleUserCommand({ env: testEnv, from: { language_code: "zh-CN" }, message: { chat: { id: 42, type: "private" }, text: "/start" }, reply: async (text: string) => { replies.push(text); } } as never);
+		expect(replies).toEqual(["请告诉我你想转发什么。"]);
+		const columns = await env.DB.prepare("PRAGMA table_info(captcha_challenges)").all<{ name: string }>();
+		expect(columns.results.map(({ name }) => name)).not.toContain("attempts");
+		const blockedColumns = await env.DB.prepare("PRAGMA table_info(blocked_users)").all<{ name: string }>();
+		expect(blockedColumns.results.map(({ name }) => name)).toEqual(["user_id", "blocked_at"]);
 	});
 });

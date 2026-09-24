@@ -4,6 +4,7 @@ import { createDb } from "./db";
 import { settings } from "./db/schema";
 import type { BotContext } from "./bot";
 import { initializeForwardGroup, readForwardGroupId } from "./forward-group";
+import { t } from "./i18n";
 
 const SCOPE = "admin-menu";
 const SESSION_TTL_MS = 10 * 60_000;
@@ -18,23 +19,23 @@ export async function isGroupAdmin(ctx: BotContext, userId: number, groupId: str
 
 async function initializeFromCurrentGroup(ctx: BotContext) {
 	if (!ctx.from || !ctx.chat || ctx.chat.type !== "supergroup" || ctx.message?.message_thread_id != null) {
-		await ctx.reply("Run /admin in the main chat of the forwarding forum group.");
+		await ctx.reply(t(ctx, "runAdminMain"));
 		return null;
 	}
 	const groupId = String(ctx.chat.id);
 	const chat = await ctx.api.getChat(groupId);
 	const isForum = "is_forum" in chat && chat.is_forum === true;
 	if (!isForum) {
-		await ctx.reply("This group must have Topics enabled.");
+		await ctx.reply(t(ctx, "topicsRequired"));
 		return null;
 	}
 	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return null;
 	if (!canManageTopics(await ctx.api.getChatMember(groupId, ctx.me.id))) {
-		await ctx.reply("Make the bot an administrator with Manage Topics permission, then run /admin again.");
+		await ctx.reply(t(ctx, "botTopicsRequired"));
 		return null;
 	}
 	if (await initializeForwardGroup(ctx.env.DB, groupId)) return groupId;
-	await ctx.reply("A forwarding group is already configured.");
+	await ctx.reply(t(ctx, "groupConfigured"));
 	return null;
 }
 
@@ -43,9 +44,9 @@ export async function showAdminMenu(ctx: BotContext) {
 	const initialized = !groupId;
 	if (!groupId) groupId = await initializeFromCurrentGroup(ctx);
 	if (!groupId || !ctx.from || ctx.chat?.id.toString() !== groupId || ctx.message?.message_thread_id != null || !(await isGroupAdmin(ctx, ctx.from.id, groupId))) return;
-	if (initialized) await ctx.reply("Forwarding group initialized.");
-	await ctx.reply("Admin settings", {
-		reply_markup: new InlineKeyboard().text("Welcome message", "admin:set:default_message").text("Captcha", "admin:set:captcha").row().text("Cancel", "admin:cancel"),
+	if (initialized) await ctx.reply(t(ctx, "groupInitialized"));
+	await ctx.reply(t(ctx, "adminSettings"), {
+		reply_markup: new InlineKeyboard().text(t(ctx, "welcomeMessage"), "admin:set:default_message").text(t(ctx, "captchaSetting"), "admin:set:captcha").row().text(t(ctx, "autoReplies"), "admin:auto:menu").text(t(ctx, "spamKeywords"), "admin:spam:menu").row().text(t(ctx, "cancel"), "admin:cancel"),
 	});
 }
 
@@ -56,14 +57,14 @@ export async function handleAdminCallback(ctx: BotContext & { callbackQuery: { d
 	await ctx.answerCallbackQuery();
 	if (action === "admin:cancel") {
 		await cancelAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
-		await ctx.editMessageText("Cancelled.");
+		await ctx.editMessageText(t(ctx, "cancelled"));
 		return;
 	}
-	if (action === "admin:set" || action.startsWith("admin:set:")) {
-		const key = action.slice("admin:set:".length) || "default_message";
+	if (action.startsWith("admin:set:")) {
+		const key = action.slice("admin:set:".length);
 		if (key !== "default_message" && key !== "captcha") return;
 		await saveAdminSession(ctx.env.DB, { adminId: String(ctx.from.id), scope: SCOPE, state: "awaiting-value", payload: { key }, expiresAt: Date.now() + SESSION_TTL_MS });
-		await ctx.editMessageText("Send the value, or /cancel.");
+		await ctx.editMessageText(t(ctx, "sendValue"));
 		return;
 	}
 }
@@ -73,7 +74,7 @@ export async function handleAdminInput(ctx: BotContext & { message: { text?: str
 	if (!ctx.from || !groupId || ctx.message.chat.id.toString() !== groupId || ctx.message.message_thread_id != null || !(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
 	if (ctx.message.text === "/cancel") {
 		await cancelAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
-		await ctx.reply("Cancelled.");
+		await ctx.reply(t(ctx, "cancelled"));
 		return true;
 	}
 	const session = await loadAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
@@ -81,8 +82,8 @@ export async function handleAdminInput(ctx: BotContext & { message: { text?: str
 	if (session.state === "awaiting-value" && ctx.message.text) {
 		const key = typeof session.payload.key === "string" ? session.payload.key : null;
 		if (key) await createDb(ctx.env.DB).insert(settings).values({ key, value: ctx.message.text, updatedAt: Date.now() }).onConflictDoUpdate({ target: settings.key, set: { value: ctx.message.text, updatedAt: Date.now() } });
-		await saveAdminSession(ctx.env.DB, { ...session, state: "completed", payload: { value: ctx.message.text }, expiresAt: Date.now() + SESSION_TTL_MS });
-		await ctx.reply("Saved.");
+		await cancelAdminSession(ctx.env.DB, String(ctx.from.id), SCOPE);
+		await ctx.reply(t(ctx, "saved"));
 		return true;
 	}
 	return false;

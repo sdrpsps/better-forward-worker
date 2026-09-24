@@ -5,6 +5,8 @@ import { blockedUsers, messages, settings, topics, userPermissionOverrides, veri
 import type { BotContext } from "./bot";
 import { isGroupAdmin } from "./admin-flow";
 import { readForwardGroupId } from "./forward-group";
+import { t } from "./i18n";
+import { parsePermissionKeys } from "./permissions";
 
 type MessageContext = BotContext & { message: Message };
 type Topic = NonNullable<Awaited<ReturnType<typeof findTopic>>>;
@@ -117,7 +119,7 @@ export async function handleUserCommand(ctx: MessageContext) {
 	if (command === "/start" || command === "/help") {
 		if (ctx.message.chat.type !== "private") return false;
 		const configured = await createDb(ctx.env.DB).select({ value: settings.value }).from(settings).where(eq(settings.key, "default_message")).get();
-		await ctx.reply(configured?.value || "Tell me what you want to forward.");
+		await ctx.reply(configured?.value || t(ctx, "welcome"));
 		return true;
 	}
 	if (ctx.message.chat.type !== "private") return false;
@@ -126,7 +128,7 @@ export async function handleUserCommand(ctx: MessageContext) {
 	if (command === "/delete" && topic && groupId) {
 		await ctx.api.deleteForumTopic(groupId, Number(topic.threadId));
 		await createDb(ctx.env.DB).delete(topics).where(eq(topics.id, topic.id));
-		await ctx.reply("Thread deleted.");
+		await ctx.reply(t(ctx, "threadDeleted"));
 		return true;
 	}
 	if ((command === "/terminate" || command === "/refresh") && topic && groupId) {
@@ -144,42 +146,50 @@ export async function handleAdminCommand(ctx: MessageContext) {
 	if (!(await isGroupAdmin(ctx, ctx.from.id, groupId))) return false;
 	const [command, ...rest] = text.trim().split(/\s+/);
 	if (command === "/permission") {
-		const [key, decision] = rest;
-		if (!key || (decision !== "allow" && decision !== "deny")) {
-			await ctx.reply("Usage: /permission <key> <allow|deny>");
+		const decision = rest.at(-1);
+		const { keys, unknown } = parsePermissionKeys(rest.slice(0, -1).join(" "));
+		if ((decision !== "allow" && decision !== "deny") || !keys.length || unknown.length) {
+			await ctx.reply(unknown.length ? t(ctx, "unknownPermission", { keys: unknown.join(", ") }) : t(ctx, "permissionUsage"));
 			return true;
 		}
-		await createDb(ctx.env.DB).insert(settings).values({ key: `permission:${key}`, value: decision, updatedAt: Date.now() }).onConflictDoUpdate({ target: settings.key, set: { value: decision, updatedAt: Date.now() } });
-		await ctx.reply("Global permission saved.");
+		const now = Date.now();
+		await createDb(ctx.env.DB).insert(settings).values(keys.map((key) => ({ key: `permission:${key}`, value: decision, updatedAt: now }))).onConflictDoUpdate({ target: settings.key, set: { value: decision, updatedAt: now } });
+		await ctx.reply(t(ctx, "globalPermissionSaved"));
 		return true;
 	}
 	if (ctx.message.message_thread_id == null) return false;
 	const topic = await findTopic(ctx.env.DB, eq(topics.threadId, String(ctx.message.message_thread_id)));
 	if (!topic) return false;
 	if (command === "/allow" || command === "/deny") {
-		const key = rest[0];
-		if (!key) {
-			await ctx.reply(`Usage: ${command} <key>`);
+		const { keys, unknown } = parsePermissionKeys(rest.join(" "));
+		if (!keys.length || unknown.length) {
+			await ctx.reply(unknown.length ? t(ctx, "unknownPermission", { keys: unknown.join(", ") }) : t(ctx, "userPermissionUsage", { command: command.slice(1) }));
 			return true;
 		}
-		await createDb(ctx.env.DB).insert(userPermissionOverrides).values({ userId: topic.userId, permissionKey: key, override: command === "/allow" ? "allow" : "deny", updatedAt: Date.now() }).onConflictDoUpdate({ target: [userPermissionOverrides.userId, userPermissionOverrides.permissionKey], set: { override: command === "/allow" ? "allow" : "deny", updatedAt: Date.now() } });
-		await ctx.reply("User permission saved.");
+		const now = Date.now();
+		const override: "allow" | "deny" = command === "/allow" ? "allow" : "deny";
+		await createDb(ctx.env.DB).insert(userPermissionOverrides).values(keys.map((permissionKey) => ({ userId: topic.userId, permissionKey, override, updatedAt: now }))).onConflictDoUpdate({ target: [userPermissionOverrides.userId, userPermissionOverrides.permissionKey], set: { override, updatedAt: now } });
+		await ctx.reply(t(ctx, "userPermissionSaved"));
 		return true;
 	}
 	if (command === "/ban") {
-		await createDb(ctx.env.DB).insert(blockedUsers).values({ userId: topic.userId, username: null, firstName: null, lastName: null, blockedAt: Date.now() }).onConflictDoNothing();
+		await createDb(ctx.env.DB).insert(blockedUsers).values({ userId: topic.userId, blockedAt: Date.now() }).onConflictDoNothing();
 		await ctx.api.closeForumTopic(groupId, Number(topic.threadId));
-		await ctx.reply("User blocked.");
+		await ctx.reply(t(ctx, "userBlocked"));
 		return true;
 	}
 	if (command === "/verify") {
 		await createDb(ctx.env.DB).insert(verifiedUsers).values({ userId: topic.userId, verifiedAt: Date.now() }).onConflictDoUpdate({ target: verifiedUsers.userId, set: { verifiedAt: Date.now() } });
-		await ctx.reply("User verified.");
+		await ctx.reply(t(ctx, "userVerified"));
 		return true;
 	}
 	if (command === "/note") {
+		if (!rest.length) {
+			await ctx.reply(topic.note ? t(ctx, "noteValue", { note: topic.note }) : t(ctx, "noNote"));
+			return true;
+		}
 		await createDb(ctx.env.DB).update(topics).set({ note: rest.join(" ") || null, updatedAt: Date.now() }).where(eq(topics.id, topic.id));
-		await ctx.reply("Note saved.");
+		await ctx.reply(t(ctx, "noteSaved"));
 		return true;
 	}
 	if (command === "/delete") {

@@ -52,9 +52,6 @@ export const autoResponses = sqliteTable("auto_responses", {
 
 export const blockedUsers = sqliteTable("blocked_users", {
 	userId: text("user_id").primaryKey(),
-	username: text("username"),
-	firstName: text("first_name"),
-	lastName: text("last_name"),
 	blockedAt: integer("blocked_at").notNull(),
 });
 
@@ -80,7 +77,6 @@ export const captchaChallenges = sqliteTable("captcha_challenges", {
 	leftOperand: integer("left_operand").notNull(),
 	rightOperand: integer("right_operand").notNull(),
 	expiresAt: integer("expires_at").notNull(),
-	attempts: integer("attempts").notNull(),
 	externalToken: text("external_token"),
 	externalUrl: text("external_url"),
 });

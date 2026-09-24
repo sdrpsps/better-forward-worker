@@ -1,23 +1,10 @@
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { InlineKeyboard } from "grammy";
 import { createDb } from "./db";
-import { autoResponses, blockedUsers, captchaChallenges, settings, spamKeywords, userPermissionOverrides, verifiedUsers } from "./db/schema";
+import { autoResponses, blockedUsers, captchaChallenges, settings, spamKeywords, verifiedUsers } from "./db/schema";
 import type { BotContext } from "./bot";
-
-export const translations = {
-	en: { blocked: "You cannot send messages.", captcha: "What is {left} + {right}?", tguard: "Open verification: {url}", saved: "Saved." },
-	zh: { blocked: "你暂时不能发送消息。", captcha: "请计算 {left} + {right}。", tguard: "请打开验证链接：{url}", saved: "已保存。" },
-	ja: { blocked: "現在メッセージを送信できません。", captcha: "{left} + {right} は？", tguard: "認証を開いてください: {url}", saved: "保存しました。" },
-} as const;
-
-export function t(locale: keyof typeof translations, key: keyof typeof translations.en, values: Record<string, string | number> = {}) {
-	const template = translations[locale]?.[key] ?? translations.en[key];
-	return template.replace(/\{(\w+)\}/g, (_, name) => String(values[name] ?? `{${name}}`));
-}
-
-export function missingTranslationKeys(locale: keyof typeof translations, keys: string[]) {
-	return keys.filter((key) => !(key in translations[locale]));
-}
+import { t } from "./i18n";
+import { deniedPermissions, messagePermissions } from "./permissions";
 
 export function validateRegex(source: string) {
 	if (source.length > 256 || /\\\d|\(\?[=!<]|\([^)]*[+*][^)]*\)[+*]/.test(source)) return false;
@@ -56,16 +43,6 @@ export async function isVerified(binding: D1Database, userId: string) {
 	return Boolean(await createDb(binding).select({ userId: verifiedUsers.userId }).from(verifiedUsers).where(eq(verifiedUsers.userId, userId)).get());
 }
 
-export async function permission(binding: D1Database, userId: string, key: string, defaultValue: boolean) {
-	const row = await createDb(binding).select().from(userPermissionOverrides).where(and(eq(userPermissionOverrides.userId, userId), eq(userPermissionOverrides.permissionKey, key))).get();
-	return row ? row.override === "allow" : defaultValue;
-}
-
-export async function canForward(binding: D1Database, userId: string) {
-	const global = await createDb(binding).select({ value: settings.value }).from(settings).where(eq(settings.key, "permission:forward")).get();
-	return permission(binding, userId, "forward", global?.value !== "deny");
-}
-
 export async function answerCaptcha(binding: D1Database, userId: string, answer: number, now = Date.now()) {
 	const db = createDb(binding);
 	const challenge = await db.select().from(captchaChallenges).where(eq(captchaChallenges.userId, userId)).get();
@@ -89,12 +66,12 @@ export async function handleCaptchaCallback(ctx: BotContext & { callbackQuery: {
 	const match = /^captcha:(\d+):(\d+)$/.exec(ctx.callbackQuery.data ?? "");
 	if (!match || !ctx.from) return false;
 	if (String(ctx.from.id) !== match[1]) {
-		await ctx.answerCallbackQuery({ text: "This is not your challenge." });
+		await ctx.answerCallbackQuery({ text: t(ctx, "notYourChallenge") });
 		return true;
 	}
 	const passed = await answerCaptcha(ctx.env.DB, match[1], Number(match[2]));
-	await ctx.answerCallbackQuery({ text: passed ? t("en", "saved") : "Incorrect." });
-	if (passed) await ctx.editMessageText(t("en", "saved"));
+	await ctx.answerCallbackQuery({ text: passed ? t(ctx, "saved") : t(ctx, "incorrect") });
+	if (passed) await ctx.editMessageText(t(ctx, "saved"));
 	return true;
 }
 
@@ -134,6 +111,7 @@ async function sendAutoResponse(ctx: BotContext, response: string) {
 	const [kind, fileId] = response.split(":", 2);
 	if (!fileId) return ctx.reply(response);
 	if (kind === "photo") return ctx.api.sendPhoto(ctx.chat!.id, fileId);
+	if (kind === "sticker") return ctx.api.sendSticker(ctx.chat!.id, fileId);
 	if (kind === "video") return ctx.api.sendVideo(ctx.chat!.id, fileId);
 	if (kind === "document") return ctx.api.sendDocument(ctx.chat!.id, fileId);
 	if (kind === "audio") return ctx.api.sendAudio(ctx.chat!.id, fileId);
@@ -146,17 +124,18 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 	if (ctx.message.chat.type !== "private" || !ctx.message.from) return false;
 	const userId = String(ctx.message.from.id);
 	if (await isBlocked(ctx.env.DB, userId)) {
-		await ctx.reply(t("en", "blocked"));
+		await ctx.reply(t(ctx, "blocked"));
 		return true;
 	}
-	if (!ctx.message.text?.startsWith("/") && !(await canForward(ctx.env.DB, userId))) {
-		await ctx.reply(t("en", "blocked"));
+	const denied = await deniedPermissions(ctx.env.DB, userId, messagePermissions(ctx.message as never));
+	if (denied.length) {
+		await ctx.reply(t(ctx, "restricted", { permissions: denied.map((key) => t(ctx, key)).join(", ") }));
 		return true;
 	}
 	if (ctx.message.text) {
 		const keywords = await createDb(ctx.env.DB).select({ keyword: spamKeywords.keyword }).from(spamKeywords).all();
 		if (keywords.some(({ keyword }) => ctx.message.text!.toLocaleLowerCase().includes(keyword.toLocaleLowerCase()))) {
-			await ctx.reply(t("en", "blocked"));
+			await ctx.reply(t(ctx, "blocked"));
 			return true;
 		}
 	}
@@ -171,21 +150,21 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 					await db.insert(verifiedUsers).values({ userId, verifiedAt: Date.now() }).onConflictDoUpdate({ target: verifiedUsers.userId, set: { verifiedAt: Date.now() } });
 					return false;
 				}
-				await ctx.reply(t("en", "tguard", { url: challenge.externalUrl }));
+				await ctx.reply(t(ctx, "tguard", { url: challenge.externalUrl }));
 				return true;
 			}
 			const created = await createTGuardChallenge(ctx, userId);
 			if (!created) {
-				await ctx.reply(t("en", "blocked"));
+				await ctx.reply(t(ctx, "blocked"));
 				return true;
 			}
-			await createDb(ctx.env.DB).insert(captchaChallenges).values({ userId, mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, attempts: 0, externalToken: created.token, externalUrl: created.url }).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, attempts: 0, externalToken: created.token, externalUrl: created.url } });
-			await ctx.reply(t("en", "tguard", { url: created.url }));
+			await createDb(ctx.env.DB).insert(captchaChallenges).values({ userId, mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, externalToken: created.token, externalUrl: created.url }).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: "tguard", leftOperand: 0, rightOperand: 0, expiresAt: created.expiresAt, externalToken: created.token, externalUrl: created.url } });
+			await ctx.reply(t(ctx, "tguard", { url: created.url }));
 			return true;
 		}
 		if (captchaMode !== "button" && challenge && ctx.message.text && /^\d+$/.test(ctx.message.text)) {
-			if (await answerCaptcha(ctx.env.DB, userId, Number(ctx.message.text))) await ctx.reply(t("en", "saved"));
-			else await ctx.reply(t("en", "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }));
+			if (await answerCaptcha(ctx.env.DB, userId, Number(ctx.message.text))) await ctx.reply(t(ctx, "saved"));
+			else await ctx.reply(t(ctx, "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }));
 			return true;
 		}
 		if (!challenge || challenge.expiresAt <= Date.now()) {
@@ -193,10 +172,10 @@ export async function handleIncomingPolicy(ctx: BotContext & { message: { chat: 
 			crypto.getRandomValues(random);
 			const left = 1 + (random[0] % 9);
 			const right = 1 + (random[1] % 9);
-			challenge = { userId, mode: captchaMode === "button" ? "button" : "math", leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, attempts: 0, externalToken: null, externalUrl: null };
-			await createDb(ctx.env.DB).insert(captchaChallenges).values(challenge).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: challenge.mode, leftOperand: left, rightOperand: right, expiresAt: challenge.expiresAt, attempts: 0, externalToken: null, externalUrl: null } });
+		challenge = { userId, mode: captchaMode === "button" ? "button" : "math", leftOperand: left, rightOperand: right, expiresAt: Date.now() + 10 * 60_000, externalToken: null, externalUrl: null };
+			await createDb(ctx.env.DB).insert(captchaChallenges).values(challenge).onConflictDoUpdate({ target: captchaChallenges.userId, set: { mode: challenge.mode, leftOperand: left, rightOperand: right, expiresAt: challenge.expiresAt, externalToken: null, externalUrl: null } });
 		}
-		await ctx.reply(t("en", "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }), captchaMode === "button" ? { reply_markup: captchaKeyboard(userId, challenge.leftOperand + challenge.rightOperand) } : undefined);
+		await ctx.reply(t(ctx, "captcha", { left: challenge.leftOperand, right: challenge.rightOperand }), captchaMode === "button" ? { reply_markup: captchaKeyboard(userId, challenge.leftOperand + challenge.rightOperand) } : undefined);
 		return true;
 	}
 	if (!ctx.message.text) return false;
